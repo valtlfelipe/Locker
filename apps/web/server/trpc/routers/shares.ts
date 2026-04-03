@@ -291,10 +291,7 @@ export const sharesRouter = createRouter({
         .where(and(...queryConditions));
       if (!file) throw new Error("File not found");
 
-      const storage = await createStorageForFile(
-        link.workspaceId,
-        file.storageProvider,
-      );
+      const storage = await createStorageForFile(file.storageConfigId);
       const url = await storage.getSignedUrl(file.storagePath, 3600);
 
       const [updated] = await ctx.db

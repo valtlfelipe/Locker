@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { getDb } from "@openstore/database/client";
 import { workspaceStorageConfigs } from "@openstore/database";
 import {
@@ -9,100 +9,126 @@ import {
 } from "@openstore/storage";
 import { decryptSecret } from "./s3/auth";
 
+// ── Internal helpers ────────────────────────────────────────────────────
+
+function buildConfig(row: {
+  provider: string;
+  bucket: string;
+  region: string | null;
+  endpoint: string | null;
+  encryptedCredentials: string;
+}): WorkspaceStorageConfig {
+  return {
+    provider: row.provider as "s3" | "r2" | "vercel",
+    bucket: row.bucket,
+    region: row.region,
+    endpoint: row.endpoint,
+    credentials: JSON.parse(decryptSecret(row.encryptedCredentials)),
+  };
+}
+
 /**
- * Load the active BYOB config for a workspace, or null if none exists.
+ * Load the active BYOB config for a workspace.
+ * Returns the config row (with id) or null.
  */
-async function loadWorkspaceConfig(workspaceId: string) {
+async function loadActiveConfig(workspaceId: string) {
   const db = getDb();
 
-  const [config] = await db
+  const [row] = await db
     .select({
+      id: workspaceStorageConfigs.id,
       provider: workspaceStorageConfigs.provider,
       bucket: workspaceStorageConfigs.bucket,
       region: workspaceStorageConfigs.region,
       endpoint: workspaceStorageConfigs.endpoint,
       encryptedCredentials: workspaceStorageConfigs.encryptedCredentials,
-      isActive: workspaceStorageConfigs.isActive,
     })
     .from(workspaceStorageConfigs)
-    .where(eq(workspaceStorageConfigs.workspaceId, workspaceId));
+    .where(
+      and(
+        eq(workspaceStorageConfigs.workspaceId, workspaceId),
+        eq(workspaceStorageConfigs.isActive, true),
+      ),
+    );
 
-  if (!config || !config.isActive) {
-    return null;
-  }
+  return row ?? null;
+}
 
-  const credentials = JSON.parse(decryptSecret(config.encryptedCredentials));
+/**
+ * Load a specific config by ID (may be active or inactive).
+ */
+async function loadConfigById(configId: string) {
+  const db = getDb();
 
-  return {
-    provider: config.provider as "s3" | "r2" | "vercel",
-    bucket: config.bucket,
-    region: config.region,
-    endpoint: config.endpoint,
-    credentials,
-  } satisfies WorkspaceStorageConfig;
+  const [row] = await db
+    .select({
+      id: workspaceStorageConfigs.id,
+      provider: workspaceStorageConfigs.provider,
+      bucket: workspaceStorageConfigs.bucket,
+      region: workspaceStorageConfigs.region,
+      endpoint: workspaceStorageConfigs.endpoint,
+      encryptedCredentials: workspaceStorageConfigs.encryptedCredentials,
+    })
+    .from(workspaceStorageConfigs)
+    .where(eq(workspaceStorageConfigs.id, configId));
+
+  return row ?? null;
+}
+
+// ── Public API ──────────────────────────────────────────────────────────
+
+export interface WorkspaceStorageResult {
+  storage: StorageProvider;
+  /** The config row ID to stamp on new file records (null = platform default). */
+  configId: string | null;
+  /** Provider name for the storageProvider column. */
+  providerName: string;
 }
 
 /**
  * Create a storage adapter for **new uploads** to a workspace.
- * Uses the workspace's custom storage config if one exists and is active,
- * otherwise falls back to the platform default.
+ * Returns the adapter plus the config ID and provider name that should
+ * be persisted on the new file record.
  */
 export async function createStorageForWorkspace(
   workspaceId: string,
-): Promise<StorageProvider> {
-  const config = await loadWorkspaceConfig(workspaceId);
-  if (!config) return createStorage();
-  return createStorageFromConfig(config);
+): Promise<WorkspaceStorageResult> {
+  const row = await loadActiveConfig(workspaceId);
+  if (!row) {
+    return {
+      storage: createStorage(),
+      configId: null,
+      providerName: process.env.BLOB_STORAGE_PROVIDER ?? "local",
+    };
+  }
+  return {
+    storage: createStorageFromConfig(buildConfig(row)),
+    configId: row.id,
+    providerName: row.provider,
+  };
 }
 
 /**
  * Create a storage adapter appropriate for accessing an **existing file**.
  *
- * Uses the file's recorded `storageProvider` to decide which backend to use:
- * - If the workspace has an active BYOB config whose provider matches the
- *   file's storageProvider, use that config (the file lives in the BYOB bucket).
- * - Otherwise, fall back to the platform default (the file was stored with the
- *   platform backend, or the BYOB config that created it has since been removed).
- *
- * This prevents provider switches from stranding files: reads/deletes always
- * route to the backend where the file actually lives.
+ * Routes via the file's `storageConfigId`:
+ * - If the file has a config ID, loads that specific config row (which may
+ *   be inactive/historical) so reads always hit the correct bucket.
+ * - If the config row was deleted (SET NULL), falls back to platform default.
+ * - If the file has no config ID, it was stored with the platform default.
  */
 export async function createStorageForFile(
-  workspaceId: string,
-  fileStorageProvider: string,
+  storageConfigId: string | null,
 ): Promise<StorageProvider> {
-  const config = await loadWorkspaceConfig(workspaceId);
-
-  // If there's an active BYOB config and the file was stored with that provider,
-  // use the BYOB config (the file lives in the custom bucket).
-  if (config && config.provider === fileStorageProvider) {
-    return createStorageFromConfig(config);
+  if (!storageConfigId) {
+    return createStorage();
   }
 
-  // Otherwise the file was stored with the platform default backend.
-  return createStorage();
-}
-
-/**
- * Returns the storage provider name for a workspace.
- * If a custom config is active, returns that provider; otherwise the platform default.
- */
-export async function getStorageProviderForWorkspace(
-  workspaceId: string,
-): Promise<string> {
-  const db = getDb();
-
-  const [config] = await db
-    .select({
-      provider: workspaceStorageConfigs.provider,
-      isActive: workspaceStorageConfigs.isActive,
-    })
-    .from(workspaceStorageConfigs)
-    .where(eq(workspaceStorageConfigs.workspaceId, workspaceId));
-
-  if (config?.isActive) {
-    return config.provider;
+  const row = await loadConfigById(storageConfigId);
+  if (!row) {
+    // Config was hard-deleted (shouldn't happen with SET NULL, but be safe)
+    return createStorage();
   }
 
-  return process.env.BLOB_STORAGE_PROVIDER ?? "local";
+  return createStorageFromConfig(buildConfig(row));
 }

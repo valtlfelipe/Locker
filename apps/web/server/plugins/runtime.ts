@@ -61,7 +61,7 @@ export async function buildPluginContext(params: {
     workspaceId: params.workspaceId,
     userId: params.userId,
     db: params.db,
-    storage: await createStorageForWorkspace(params.workspaceId),
+    storage: (await createStorageForWorkspace(params.workspaceId)).storage,
     config: params.config,
     secrets,
   };

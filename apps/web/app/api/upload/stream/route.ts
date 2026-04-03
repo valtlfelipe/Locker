@@ -102,11 +102,8 @@ export async function PUT(req: NextRequest) {
   }
 
   // Stream the request body to storage
-  // Use the provider that was recorded when the upload was initiated
-  const storage = await createStorageForFile(
-    membership.workspaceId,
-    fileRecord.storageProvider,
-  );
+  // Use the config that was recorded when the upload was initiated
+  const storage = await createStorageForFile(fileRecord.storageConfigId);
 
   try {
     await storage.upload({

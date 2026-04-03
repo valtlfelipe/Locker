@@ -5,7 +5,7 @@ import {
   uuid,
   varchar,
   boolean,
-  uniqueIndex,
+  index,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import { workspaces } from "./workspaces";
@@ -28,9 +28,7 @@ export const workspaceStorageConfigs = pgTable(
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },
   (table) => [
-    uniqueIndex("workspace_storage_configs_workspace_id_idx").on(
-      table.workspaceId,
-    ),
+    index("workspace_storage_configs_workspace_id_idx").on(table.workspaceId),
   ],
 );
 

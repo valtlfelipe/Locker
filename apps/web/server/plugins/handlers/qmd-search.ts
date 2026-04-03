@@ -35,7 +35,7 @@ export const qmdSearchHandler: PluginHandler = {
           .select({
             storagePath: files.storagePath,
             mimeType: files.mimeType,
-            storageProvider: files.storageProvider,
+            storageConfigId: files.storageConfigId,
           })
           .from(files)
           .where(
@@ -47,10 +47,7 @@ export const qmdSearchHandler: PluginHandler = {
           .limit(1);
 
         if (file && qmdClient.shouldIndex(file.mimeType)) {
-          const storage = await createStorageForFile(
-            ctx.workspaceId,
-            file.storageProvider,
-          );
+          const storage = await createStorageForFile(file.storageConfigId);
           const { data } = await storage.download(file.storagePath);
           const content = await streamToString(data);
 

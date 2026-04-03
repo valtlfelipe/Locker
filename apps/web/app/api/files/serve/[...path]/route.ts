@@ -37,18 +37,17 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     return new Response("Access denied", { status: 403 });
   }
 
-  // Look up file record to determine which storage backend it lives in
-  const workspaceId = path[0]!;
+  // Look up file record to determine which storage config it uses
   const db = getDb();
   const [fileRecord] = await db
-    .select({ storageProvider: files.storageProvider })
+    .select({ storageConfigId: files.storageConfigId })
     .from(files)
     .where(eq(files.storagePath, objectPath))
     .limit(1);
 
-  const storageProvider =
-    fileRecord?.storageProvider ?? process.env.BLOB_STORAGE_PROVIDER ?? "local";
-  const storage = await createStorageForFile(workspaceId, storageProvider);
+  const storage = await createStorageForFile(
+    fileRecord?.storageConfigId ?? null,
+  );
 
   try {
     const file = await storage.download(objectPath);

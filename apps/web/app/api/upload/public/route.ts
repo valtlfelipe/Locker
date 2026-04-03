@@ -1,10 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@openstore/database/client";
 import { files, uploadLinks, workspaces } from "@openstore/database";
-import {
-  createStorageForWorkspace,
-  getStorageProviderForWorkspace,
-} from "../../../../server/storage";
+import { createStorageForWorkspace } from "../../../../server/storage";
 import { eq, sql } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import { verifyLinkPassword } from "@/server/security/password";
@@ -84,7 +81,9 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const storage = await createStorageForWorkspace(link.workspaceId);
+  const { storage, configId, providerName } = await createStorageForWorkspace(
+    link.workspaceId,
+  );
   const fileId = randomUUID();
   const storagePath = `${link.workspaceId}/${fileId}/${file.name}`;
 
@@ -105,7 +104,8 @@ export async function POST(req: NextRequest) {
     mimeType: file.type || "application/octet-stream",
     size: file.size,
     storagePath,
-    storageProvider: await getStorageProviderForWorkspace(link.workspaceId),
+    storageProvider: providerName,
+    storageConfigId: configId,
     status: "ready",
   });
 

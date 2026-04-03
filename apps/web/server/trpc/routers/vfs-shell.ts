@@ -39,7 +39,7 @@ export const vfsShellRouter = createRouter({
     .mutation(async ({ ctx, input }) => {
       return createVfsShellSession({
         db: ctx.db,
-        storage: await createStorageForWorkspace(ctx.workspaceId),
+        storage: (await createStorageForWorkspace(ctx.workspaceId)).storage,
         workspaceId: ctx.workspaceId,
         userId: ctx.userId,
         cwd: input.cwd,

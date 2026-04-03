@@ -6,7 +6,6 @@ import { files, folders, workspaces } from "@openstore/database";
 import {
   createStorageForWorkspace,
   createStorageForFile,
-  getStorageProviderForWorkspace,
 } from "../../../server/storage";
 import { qmdClient, streamToString } from "../../plugins/handlers/qmd-client";
 import { invalidateWorkspaceVfsSnapshot } from "../../vfs/openstore-vfs";
@@ -20,10 +19,11 @@ import {
 
 export const uploadsRouter = createRouter({
   getProvider: workspaceProcedure.query(async ({ ctx }) => {
-    const provider = await getStorageProviderForWorkspace(ctx.workspaceId);
-    const storage = await createStorageForWorkspace(ctx.workspaceId);
+    const { storage, providerName } = await createStorageForWorkspace(
+      ctx.workspaceId,
+    );
     return {
-      provider,
+      provider: providerName,
       supportsPresignedUpload: storage.supportsPresignedUpload,
     };
   }),
@@ -73,8 +73,8 @@ export const uploadsRouter = createRouter({
 
       const fileId = randomUUID();
       const storagePath = `${workspaceId}/${fileId}/${input.fileName}`;
-      const storage = await createStorageForWorkspace(workspaceId);
-      const storageProvider = await getStorageProviderForWorkspace(workspaceId);
+      const { storage, configId, providerName } =
+        await createStorageForWorkspace(workspaceId);
 
       // Insert file record with 'uploading' status
       await db.insert(files).values({
@@ -86,7 +86,8 @@ export const uploadsRouter = createRouter({
         mimeType: input.contentType,
         size: input.fileSize,
         storagePath,
-        storageProvider,
+        storageProvider: providerName,
+        storageConfigId: configId,
         status: "uploading",
       });
 
@@ -160,10 +161,7 @@ export const uploadsRouter = createRouter({
 
       // Complete multipart upload if applicable
       if (input.uploadId && input.parts) {
-        const storage = await createStorageForFile(
-          workspaceId,
-          file.storageProvider,
-        );
+        const storage = await createStorageForFile(file.storageConfigId);
         await storage.completeMultipartUpload!({
           path: file.storagePath,
           uploadId: input.uploadId,
@@ -186,16 +184,13 @@ export const uploadsRouter = createRouter({
         })
         .where(eq(workspaces.id, workspaceId));
 
-      // Fire-and-forget: index file for QMD search (only if plugin is active for this workspace)
+      // Fire-and-forget: index file for QMD search
       if (qmdClient.isConfigured() && qmdClient.shouldIndex(file.mimeType)) {
         void (async () => {
           try {
             if (!(await qmdClient.isActiveForWorkspace(db, workspaceId)))
               return;
-            const storage = await createStorageForFile(
-              workspaceId,
-              file.storageProvider,
-            );
+            const storage = await createStorageForFile(file.storageConfigId);
             const { data } = await storage.download(file.storagePath);
             const content = await streamToString(data);
             await qmdClient.indexFile({
@@ -227,10 +222,7 @@ export const uploadsRouter = createRouter({
 
       if (!file) return { success: true };
 
-      const storage = await createStorageForFile(
-        workspaceId,
-        file.storageProvider,
-      );
+      const storage = await createStorageForFile(file.storageConfigId);
 
       // Abort multipart upload if applicable
       if (input.uploadId) {

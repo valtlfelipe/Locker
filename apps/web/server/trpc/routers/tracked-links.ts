@@ -585,10 +585,7 @@ export const trackedLinksRouter = createRouter({
         })
         .where(eq(trackedLinks.id, link.id));
 
-      const storage = await createStorageForFile(
-        link.workspaceId,
-        file.storageProvider,
-      );
+      const storage = await createStorageForFile(file.storageConfigId);
       const url = await storage.getSignedUrl(file.storagePath, 3600);
       return { url, filename: file.name };
     }),

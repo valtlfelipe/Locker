@@ -1,9 +1,9 @@
 import { z } from "zod";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { createRouter, workspaceAdminProcedure } from "../init";
 import { workspaceStorageConfigs } from "@openstore/database";
-import { encryptSecret, decryptSecret } from "../../s3/auth";
+import { encryptSecret } from "../../s3/auth";
 import {
   createStorageFromConfig,
   type WorkspaceStorageConfig,
@@ -46,26 +46,31 @@ const saveConfigSchema = z
     path: ["credentials"],
   });
 
+const configSelect = {
+  id: workspaceStorageConfigs.id,
+  provider: workspaceStorageConfigs.provider,
+  bucket: workspaceStorageConfigs.bucket,
+  region: workspaceStorageConfigs.region,
+  endpoint: workspaceStorageConfigs.endpoint,
+  isActive: workspaceStorageConfigs.isActive,
+  lastTestedAt: workspaceStorageConfigs.lastTestedAt,
+  createdAt: workspaceStorageConfigs.createdAt,
+  updatedAt: workspaceStorageConfigs.updatedAt,
+} as const;
+
 export const storageConfigRouter = createRouter({
   get: workspaceAdminProcedure.query(async ({ ctx }) => {
     const [config] = await ctx.db
-      .select({
-        id: workspaceStorageConfigs.id,
-        provider: workspaceStorageConfigs.provider,
-        bucket: workspaceStorageConfigs.bucket,
-        region: workspaceStorageConfigs.region,
-        endpoint: workspaceStorageConfigs.endpoint,
-        isActive: workspaceStorageConfigs.isActive,
-        lastTestedAt: workspaceStorageConfigs.lastTestedAt,
-        createdAt: workspaceStorageConfigs.createdAt,
-        updatedAt: workspaceStorageConfigs.updatedAt,
-      })
+      .select(configSelect)
       .from(workspaceStorageConfigs)
-      .where(eq(workspaceStorageConfigs.workspaceId, ctx.workspaceId));
+      .where(
+        and(
+          eq(workspaceStorageConfigs.workspaceId, ctx.workspaceId),
+          eq(workspaceStorageConfigs.isActive, true),
+        ),
+      );
 
     if (!config) return null;
-
-    // Return config without credentials (never expose secrets)
     return config;
   }),
 
@@ -77,35 +82,50 @@ export const storageConfigRouter = createRouter({
       );
 
       const [existing] = await ctx.db
-        .select({ id: workspaceStorageConfigs.id })
+        .select({
+          id: workspaceStorageConfigs.id,
+          provider: workspaceStorageConfigs.provider,
+          bucket: workspaceStorageConfigs.bucket,
+        })
         .from(workspaceStorageConfigs)
-        .where(eq(workspaceStorageConfigs.workspaceId, ctx.workspaceId));
+        .where(
+          and(
+            eq(workspaceStorageConfigs.workspaceId, ctx.workspaceId),
+            eq(workspaceStorageConfigs.isActive, true),
+          ),
+        );
 
-      if (existing) {
+      const bucketOrProviderChanged =
+        existing &&
+        (existing.provider !== input.provider ||
+          existing.bucket !== input.bucket);
+
+      if (existing && !bucketOrProviderChanged) {
+        // Credential-only update (same bucket + provider): update in place.
         const [updated] = await ctx.db
           .update(workspaceStorageConfigs)
           .set({
-            provider: input.provider,
-            bucket: input.bucket,
             region: input.region ?? null,
             endpoint: input.endpoint ?? null,
             encryptedCredentials,
-            isActive: true,
             updatedAt: new Date(),
           })
-          .where(eq(workspaceStorageConfigs.workspaceId, ctx.workspaceId))
-          .returning({
-            id: workspaceStorageConfigs.id,
-            provider: workspaceStorageConfigs.provider,
-            bucket: workspaceStorageConfigs.bucket,
-            region: workspaceStorageConfigs.region,
-            endpoint: workspaceStorageConfigs.endpoint,
-            isActive: workspaceStorageConfigs.isActive,
-          });
+          .where(eq(workspaceStorageConfigs.id, existing.id))
+          .returning(configSelect);
 
         return updated;
       }
 
+      if (bucketOrProviderChanged) {
+        // Bucket or provider changed: deactivate old config (keep it for
+        // existing file references) and create a new active one.
+        await ctx.db
+          .update(workspaceStorageConfigs)
+          .set({ isActive: false, updatedAt: new Date() })
+          .where(eq(workspaceStorageConfigs.id, existing.id));
+      }
+
+      // Insert new active config
       const [created] = await ctx.db
         .insert(workspaceStorageConfigs)
         .values({
@@ -117,22 +137,23 @@ export const storageConfigRouter = createRouter({
           encryptedCredentials,
           isActive: true,
         })
-        .returning({
-          id: workspaceStorageConfigs.id,
-          provider: workspaceStorageConfigs.provider,
-          bucket: workspaceStorageConfigs.bucket,
-          region: workspaceStorageConfigs.region,
-          endpoint: workspaceStorageConfigs.endpoint,
-          isActive: workspaceStorageConfigs.isActive,
-        });
+        .returning(configSelect);
 
       return created;
     }),
 
   remove: workspaceAdminProcedure.mutation(async ({ ctx }) => {
+    // Deactivate rather than delete — existing file references need the
+    // config row to remain so reads can still resolve to the correct bucket.
     await ctx.db
-      .delete(workspaceStorageConfigs)
-      .where(eq(workspaceStorageConfigs.workspaceId, ctx.workspaceId));
+      .update(workspaceStorageConfigs)
+      .set({ isActive: false, updatedAt: new Date() })
+      .where(
+        and(
+          eq(workspaceStorageConfigs.workspaceId, ctx.workspaceId),
+          eq(workspaceStorageConfigs.isActive, true),
+        ),
+      );
 
     return { success: true };
   }),
@@ -151,7 +172,6 @@ export const storageConfigRouter = createRouter({
       try {
         const storage = createStorageFromConfig(config);
 
-        // Try a simple existence check on a test key to validate credentials
         const testPath = `.openstore-connection-test-${Date.now()}`;
         const testData = Buffer.from("connection-test");
 
@@ -161,14 +181,18 @@ export const storageConfigRouter = createRouter({
           contentType: "text/plain",
         });
 
-        // Clean up the test file
         await storage.delete(testPath);
 
-        // Update last tested timestamp if config is already saved
+        // Update last tested timestamp on the active config if it exists
         await ctx.db
           .update(workspaceStorageConfigs)
           .set({ lastTestedAt: new Date() })
-          .where(eq(workspaceStorageConfigs.workspaceId, ctx.workspaceId));
+          .where(
+            and(
+              eq(workspaceStorageConfigs.workspaceId, ctx.workspaceId),
+              eq(workspaceStorageConfigs.isActive, true),
+            ),
+          );
 
         return { success: true };
       } catch (err) {

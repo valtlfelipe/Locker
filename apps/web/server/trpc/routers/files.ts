@@ -101,10 +101,7 @@ export const filesRouter = createRouter({
 
       if (!file) throw new Error("File not found");
 
-      const storage = await createStorageForFile(
-        ctx.workspaceId,
-        file.storageProvider,
-      );
+      const storage = await createStorageForFile(file.storageConfigId);
       const url = await storage.getSignedUrl(file.storagePath, 3600);
       return { url, filename: file.name, mimeType: file.mimeType };
     }),
@@ -166,10 +163,7 @@ export const filesRouter = createRouter({
       if (!file) throw new Error("File not found");
 
       // Delete from storage
-      const storage = await createStorageForFile(
-        ctx.workspaceId,
-        file.storageProvider,
-      );
+      const storage = await createStorageForFile(file.storageConfigId);
       await storage.delete(file.storagePath);
 
       // De-index from QMD search (only if plugin is active for this workspace)
@@ -219,10 +213,7 @@ export const filesRouter = createRouter({
           .where(and(eq(files.id, id), eq(files.workspaceId, ctx.workspaceId)));
 
         if (file) {
-          const storage = await createStorageForFile(
-            ctx.workspaceId,
-            file.storageProvider,
-          );
+          const storage = await createStorageForFile(file.storageConfigId);
           await storage.delete(file.storagePath);
           if (qmdActive) {
             void qmdClient

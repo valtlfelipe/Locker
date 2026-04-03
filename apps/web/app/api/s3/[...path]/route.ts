@@ -31,7 +31,6 @@ import {
 import {
   createStorageForWorkspace,
   createStorageForFile,
-  getStorageProviderForWorkspace,
 } from "../../../../server/storage";
 import { eq, and, like, sql, isNull } from "drizzle-orm";
 
@@ -100,10 +99,7 @@ export async function GET(
   if (!file) return noSuchKey(key);
 
   try {
-    const storage = await createStorageForFile(
-      auth.workspaceId,
-      file.storageProvider,
-    );
+    const storage = await createStorageForFile(file.storageConfigId);
     const result = await storage.download(file.storagePath);
     return new Response(result.data as any, {
       status: 200,
@@ -184,10 +180,7 @@ export async function DELETE(
 
   if (file) {
     try {
-      const storage = await createStorageForFile(
-        auth.workspaceId,
-        file.storageProvider,
-      );
+      const storage = await createStorageForFile(file.storageConfigId);
       await storage.delete(file.storagePath);
     } catch {
       /* best effort */
@@ -318,7 +311,7 @@ async function handlePutObject(
         id: files.id,
         size: files.size,
         storagePath: files.storagePath,
-        storageProvider: files.storageProvider,
+        storageConfigId: files.storageConfigId,
       })
       .from(files)
       .where(
@@ -336,10 +329,9 @@ async function handlePutObject(
       dirSegments,
     );
 
-    const currentProvider = await getStorageProviderForWorkspace(
+    const { storage, configId, providerName } = await createStorageForWorkspace(
       auth.workspaceId,
     );
-    const storage = await createStorageForWorkspace(auth.workspaceId);
     const fileId = existing?.id ?? randomUUID();
     const storagePath =
       existing?.storagePath ?? `${auth.workspaceId}/${fileId}/${fileName}`;
@@ -351,12 +343,11 @@ async function handlePutObject(
     });
 
     if (existing) {
-      // If the provider changed, clean up old data from the previous backend
-      if (existing.storageProvider !== currentProvider) {
+      // If the config changed, clean up old data from the previous backend
+      if (existing.storageConfigId !== configId) {
         try {
           const oldStorage = await createStorageForFile(
-            auth.workspaceId,
-            existing.storageProvider,
+            existing.storageConfigId,
           );
           await oldStorage.delete(existing.storagePath);
         } catch {
@@ -370,7 +361,8 @@ async function handlePutObject(
           size: contentLength,
           mimeType: contentType,
           storagePath,
-          storageProvider: currentProvider,
+          storageProvider: providerName,
+          storageConfigId: configId,
           updatedAt: new Date(),
         })
         .where(eq(files.id, existing.id));
@@ -393,7 +385,8 @@ async function handlePutObject(
         mimeType: contentType,
         size: contentLength,
         storagePath,
-        storageProvider: await getStorageProviderForWorkspace(auth.workspaceId),
+        storageProvider: providerName,
+        storageConfigId: configId,
         status: "ready",
         s3Key: key,
       });
@@ -471,7 +464,7 @@ async function handleUploadPart(
 
   // Store the part in storage with a part-specific path
   const partPath = `${upload.storagePath}.part${partNumber}`;
-  const storage = await createStorageForWorkspace(auth.workspaceId);
+  const { storage } = await createStorageForWorkspace(auth.workspaceId);
 
   try {
     await storage.upload({
@@ -593,7 +586,7 @@ async function handleCompleteMultipart(
       id: files.id,
       size: files.size,
       storagePath: files.storagePath,
-      storageProvider: files.storageProvider,
+      storageConfigId: files.storageConfigId,
     })
     .from(files)
     .where(and(eq(files.workspaceId, auth.workspaceId), eq(files.s3Key, key)));
@@ -610,10 +603,9 @@ async function handleCompleteMultipart(
     return invalidRequest("Object key must include a file name");
   }
 
-  const currentProvider = await getStorageProviderForWorkspace(
+  const { storage, configId, providerName } = await createStorageForWorkspace(
     auth.workspaceId,
   );
-  const storage = await createStorageForWorkspace(auth.workspaceId);
 
   try {
     // Stream parts into a single logical object to avoid buffering entire uploads.
@@ -634,12 +626,11 @@ async function handleCompleteMultipart(
 
     const sizeDiff = totalSize - (existing?.size ?? 0);
     if (existing) {
-      // Clean up old data from previous backend if provider changed
-      if (existing.storageProvider !== currentProvider) {
+      // Clean up old data from previous backend if config changed
+      if (existing.storageConfigId !== configId) {
         try {
           const oldStorage = await createStorageForFile(
-            auth.workspaceId,
-            existing.storageProvider,
+            existing.storageConfigId,
           );
           await oldStorage.delete(existing.storagePath);
         } catch {
@@ -659,7 +650,8 @@ async function handleCompleteMultipart(
           size: totalSize,
           mimeType: upload.contentType,
           storagePath: upload.storagePath,
-          storageProvider: currentProvider,
+          storageProvider: providerName,
+          storageConfigId: configId,
           checksum: etag,
           updatedAt: new Date(),
         })
@@ -674,7 +666,8 @@ async function handleCompleteMultipart(
         mimeType: upload.contentType,
         size: totalSize,
         storagePath: upload.storagePath,
-        storageProvider: await getStorageProviderForWorkspace(auth.workspaceId),
+        storageProvider: providerName,
+        storageConfigId: configId,
         status: "ready",
         s3Key: key,
         checksum: etag,
@@ -736,7 +729,7 @@ async function handleAbortMultipart(
     .from(s3MultipartParts)
     .where(eq(s3MultipartParts.uploadId, uploadId));
 
-  const storage = await createStorageForWorkspace(auth.workspaceId);
+  const { storage } = await createStorageForWorkspace(auth.workspaceId);
   for (const part of parts) {
     try {
       await storage.delete(part.storagePath);

@@ -11,7 +11,6 @@ import {
 import {
   createStorageForWorkspace,
   createStorageForFile,
-  getStorageProviderForWorkspace,
 } from "../../../server/storage";
 import { MAX_FILE_SIZE } from "@openstore/common";
 import { eq, and, sql } from "drizzle-orm";
@@ -99,7 +98,7 @@ export async function POST(req: NextRequest) {
         size: number;
         storagePath: string;
         status: string;
-        storageProvider: string;
+        storageConfigId: string | null;
       }
     | undefined;
 
@@ -110,7 +109,7 @@ export async function POST(req: NextRequest) {
         size: files.size,
         storagePath: files.storagePath,
         status: files.status,
-        storageProvider: files.storageProvider,
+        storageConfigId: files.storageConfigId,
       })
       .from(files)
       .where(
@@ -138,14 +137,20 @@ export async function POST(req: NextRequest) {
     existingUploadRecord = uploadRecord;
   }
 
-  // Use the provider recorded at initiate time for resumed uploads,
-  // or the current workspace config for fresh uploads.
-  const storage = existingUploadRecord
-    ? await createStorageForFile(
-        workspaceId,
-        existingUploadRecord.storageProvider,
-      )
-    : await createStorageForWorkspace(workspaceId);
+  // Resolve storage: for resumed uploads use the config recorded at initiate
+  // time; for fresh uploads use the current workspace config.
+  let storage;
+  let newConfigId: string | null = null;
+  let newProviderName: string | undefined;
+
+  if (existingUploadRecord) {
+    storage = await createStorageForFile(existingUploadRecord.storageConfigId);
+  } else {
+    const ws = await createStorageForWorkspace(workspaceId);
+    storage = ws.storage;
+    newConfigId = ws.configId;
+    newProviderName = ws.providerName;
+  }
 
   const fileId = existingUploadRecord?.id ?? randomUUID();
   const storagePath =
@@ -193,7 +198,8 @@ export async function POST(req: NextRequest) {
         mimeType: file.type || "application/octet-stream",
         size: file.size,
         storagePath,
-        storageProvider: await getStorageProviderForWorkspace(workspaceId),
+        storageProvider: newProviderName!,
+        storageConfigId: newConfigId,
         status: "ready",
       })
       .returning();
