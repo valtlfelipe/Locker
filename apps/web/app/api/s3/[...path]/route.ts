@@ -1,25 +1,45 @@
-import { NextRequest } from 'next/server';
-import { createHash, randomUUID } from 'crypto';
-import { verifySignatureV4 } from '@/server/s3/auth';
+import { NextRequest } from "next/server";
+import { createHash, randomUUID } from "crypto";
+import { verifySignatureV4 } from "@/server/s3/auth";
 import {
-  accessDenied, noSuchBucket, noSuchKey, invalidRequest,
-  internalError, quotaExceeded, noSuchUpload,
-} from '@/server/s3/errors';
+  accessDenied,
+  noSuchBucket,
+  noSuchKey,
+  invalidRequest,
+  internalError,
+  quotaExceeded,
+  noSuchUpload,
+} from "@/server/s3/errors";
 import {
-  xmlResponse, listObjectsV2Xml, initiateMultipartUploadXml,
+  xmlResponse,
+  listObjectsV2Xml,
+  initiateMultipartUploadXml,
   completeMultipartUploadXml,
-} from '@/server/s3/xml';
-import { parseS3Key, resolveOrCreateFolderChain, buildS3KeyForFile } from '@/server/s3/paths';
-import { getDb } from '@openstore/database/client';
-import { files, workspaces, s3MultipartUploads, s3MultipartParts } from '@openstore/database';
-import { createStorage } from '@openstore/storage';
-import { eq, and, like, sql, isNull } from 'drizzle-orm';
+} from "@/server/s3/xml";
+import {
+  parseS3Key,
+  resolveOrCreateFolderChain,
+  buildS3KeyForFile,
+} from "@/server/s3/paths";
+import { getDb } from "@openstore/database/client";
+import {
+  files,
+  workspaces,
+  s3MultipartUploads,
+  s3MultipartParts,
+} from "@openstore/database";
+import {
+  createStorageForWorkspace,
+  createStorageForFile,
+  getStorageProviderForWorkspace,
+} from "../../../../server/storage";
+import { eq, and, like, sql, isNull } from "drizzle-orm";
 
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
 function parsePath(params: string[]): { slug: string; key: string } {
   const [slug, ...rest] = params;
-  return { slug: slug ?? '', key: rest.join('/') };
+  return { slug: slug ?? "", key: rest.join("/") };
 }
 
 type AuthResult = {
@@ -34,15 +54,25 @@ async function authenticate(req: NextRequest): Promise<AuthResult | null> {
   return verifySignatureV4(req);
 }
 
-async function verifyBucket(db: ReturnType<typeof getDb>, auth: AuthResult, slug: string) {
-  const [ws] = await db.select().from(workspaces).where(eq(workspaces.id, auth.workspaceId));
+async function verifyBucket(
+  db: ReturnType<typeof getDb>,
+  auth: AuthResult,
+  slug: string,
+) {
+  const [ws] = await db
+    .select()
+    .from(workspaces)
+    .where(eq(workspaces.id, auth.workspaceId));
   if (!ws || ws.slug !== slug) return null;
   return ws;
 }
 
 // ── GET: GetObject or ListObjectsV2 ────────────────────────────────────
 
-export async function GET(req: NextRequest, { params }: { params: Promise<{ path: string[] }> }) {
+export async function GET(
+  req: NextRequest,
+  { params }: { params: Promise<{ path: string[] }> },
+) {
   const { path } = await params;
   const { slug, key } = parsePath(path);
 
@@ -53,53 +83,67 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ path
   const ws = await verifyBucket(db, auth, slug);
   if (!ws) return noSuchBucket(slug);
 
-  if (!key || req.nextUrl.searchParams.has('list-type')) {
+  if (!key || req.nextUrl.searchParams.has("list-type")) {
     return handleListObjects(req, db, auth.workspaceId, slug);
   }
 
-  const [file] = await db.select().from(files)
-    .where(and(eq(files.workspaceId, auth.workspaceId), eq(files.s3Key, key), eq(files.status, 'ready')));
+  const [file] = await db
+    .select()
+    .from(files)
+    .where(
+      and(
+        eq(files.workspaceId, auth.workspaceId),
+        eq(files.s3Key, key),
+        eq(files.status, "ready"),
+      ),
+    );
   if (!file) return noSuchKey(key);
 
   try {
-    const storage = createStorage();
+    const storage = await createStorageForFile(
+      auth.workspaceId,
+      file.storageProvider,
+    );
     const result = await storage.download(file.storagePath);
     return new Response(result.data as any, {
       status: 200,
       headers: {
-        'Content-Type': file.mimeType,
-        'Content-Length': String(file.size),
-        'ETag': `"${file.checksum ?? file.id}"`,
-        'Last-Modified': file.updatedAt.toUTCString(),
+        "Content-Type": file.mimeType,
+        "Content-Length": String(file.size),
+        ETag: `"${file.checksum ?? file.id}"`,
+        "Last-Modified": file.updatedAt.toUTCString(),
       },
     });
   } catch {
-    return internalError('Failed to read object');
+    return internalError("Failed to read object");
   }
 }
 
 // ── PUT: PutObject or UploadPart ────────────────────────────────────────
 
-export async function PUT(req: NextRequest, { params }: { params: Promise<{ path: string[] }> }) {
+export async function PUT(
+  req: NextRequest,
+  { params }: { params: Promise<{ path: string[] }> },
+) {
   const { path } = await params;
   const { slug, key } = parsePath(path);
-  if (!key) return invalidRequest('Object key is required');
+  if (!key) return invalidRequest("Object key is required");
 
   const auth = await authenticate(req);
   if (!auth) return accessDenied();
-  if (auth.permissions === 'readonly') return accessDenied();
+  if (auth.permissions === "readonly") return accessDenied();
 
   const db = getDb();
   const ws = await verifyBucket(db, auth, slug);
   if (!ws) return noSuchBucket(slug);
 
   // UploadPart if partNumber + uploadId present
-  const partNumber = req.nextUrl.searchParams.get('partNumber');
-  const uploadId = req.nextUrl.searchParams.get('uploadId');
+  const partNumber = req.nextUrl.searchParams.get("partNumber");
+  const uploadId = req.nextUrl.searchParams.get("uploadId");
   if (partNumber && uploadId) {
     const parsedPartNumber = Number.parseInt(partNumber, 10);
     if (!Number.isInteger(parsedPartNumber) || parsedPartNumber < 1) {
-      return invalidRequest('Invalid part number');
+      return invalidRequest("Invalid part number");
     }
     return handleUploadPart(req, db, auth, key, uploadId, parsedPartNumber);
   }
@@ -110,35 +154,51 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ path
 
 // ── DELETE: DeleteObject or AbortMultipartUpload ────────────────────────
 
-export async function DELETE(req: NextRequest, { params }: { params: Promise<{ path: string[] }> }) {
+export async function DELETE(
+  req: NextRequest,
+  { params }: { params: Promise<{ path: string[] }> },
+) {
   const { path } = await params;
   const { slug, key } = parsePath(path);
-  if (!key) return invalidRequest('Object key is required');
+  if (!key) return invalidRequest("Object key is required");
 
   const auth = await authenticate(req);
   if (!auth) return accessDenied();
-  if (auth.permissions === 'readonly') return accessDenied();
+  if (auth.permissions === "readonly") return accessDenied();
 
   const db = getDb();
   const ws = await verifyBucket(db, auth, slug);
   if (!ws) return noSuchBucket(slug);
 
   // AbortMultipartUpload
-  const uploadId = req.nextUrl.searchParams.get('uploadId');
+  const uploadId = req.nextUrl.searchParams.get("uploadId");
   if (uploadId) {
     return handleAbortMultipart(db, auth, uploadId);
   }
 
   // DeleteObject
-  const [file] = await db.select().from(files)
+  const [file] = await db
+    .select()
+    .from(files)
     .where(and(eq(files.workspaceId, auth.workspaceId), eq(files.s3Key, key)));
 
   if (file) {
-    try { const storage = createStorage(); await storage.delete(file.storagePath); } catch { /* best effort */ }
+    try {
+      const storage = await createStorageForFile(
+        auth.workspaceId,
+        file.storageProvider,
+      );
+      await storage.delete(file.storagePath);
+    } catch {
+      /* best effort */
+    }
     await db.delete(files).where(eq(files.id, file.id));
-    await db.update(workspaces).set({
-      storageUsed: sql`GREATEST(${workspaces.storageUsed} - ${file.size}, 0)`,
-    }).where(eq(workspaces.id, auth.workspaceId));
+    await db
+      .update(workspaces)
+      .set({
+        storageUsed: sql`GREATEST(${workspaces.storageUsed} - ${file.size}, 0)`,
+      })
+      .where(eq(workspaces.id, auth.workspaceId));
   }
 
   return new Response(null, { status: 204 });
@@ -146,7 +206,10 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ p
 
 // ── HEAD: HeadObject or HeadBucket ──────────────────────────────────────
 
-export async function HEAD(req: NextRequest, { params }: { params: Promise<{ path: string[] }> }) {
+export async function HEAD(
+  req: NextRequest,
+  { params }: { params: Promise<{ path: string[] }> },
+) {
   const { path } = await params;
   const { slug, key } = parsePath(path);
 
@@ -158,51 +221,71 @@ export async function HEAD(req: NextRequest, { params }: { params: Promise<{ pat
   if (!ws) return noSuchBucket(slug);
 
   if (!key) {
-    return new Response(null, { status: 200, headers: { 'x-amz-bucket-region': 'us-east-1' } });
+    return new Response(null, {
+      status: 200,
+      headers: { "x-amz-bucket-region": "us-east-1" },
+    });
   }
 
-  const [file] = await db.select().from(files)
-    .where(and(eq(files.workspaceId, auth.workspaceId), eq(files.s3Key, key), eq(files.status, 'ready')));
+  const [file] = await db
+    .select()
+    .from(files)
+    .where(
+      and(
+        eq(files.workspaceId, auth.workspaceId),
+        eq(files.s3Key, key),
+        eq(files.status, "ready"),
+      ),
+    );
   if (!file) return noSuchKey(key);
 
   return new Response(null, {
     status: 200,
     headers: {
-      'Content-Type': file.mimeType,
-      'Content-Length': String(file.size),
-      'ETag': `"${file.checksum ?? file.id}"`,
-      'Last-Modified': file.updatedAt.toUTCString(),
+      "Content-Type": file.mimeType,
+      "Content-Length": String(file.size),
+      ETag: `"${file.checksum ?? file.id}"`,
+      "Last-Modified": file.updatedAt.toUTCString(),
     },
   });
 }
 
 // ── POST: CreateMultipartUpload or CompleteMultipartUpload ───────────────
 
-export async function POST(req: NextRequest, { params }: { params: Promise<{ path: string[] }> }) {
+export async function POST(
+  req: NextRequest,
+  { params }: { params: Promise<{ path: string[] }> },
+) {
   const { path } = await params;
   const { slug, key } = parsePath(path);
-  if (!key) return invalidRequest('Object key is required');
+  if (!key) return invalidRequest("Object key is required");
 
   const auth = await authenticate(req);
   if (!auth) return accessDenied();
-  if (auth.permissions === 'readonly') return accessDenied();
+  if (auth.permissions === "readonly") return accessDenied();
 
   const db = getDb();
   const ws = await verifyBucket(db, auth, slug);
   if (!ws) return noSuchBucket(slug);
 
   // CreateMultipartUpload: POST /{slug}/{key}?uploads
-  if (req.nextUrl.searchParams.has('uploads')) {
-    return handleCreateMultipart(db, auth, slug, key, req.headers.get('content-type') ?? 'application/octet-stream');
+  if (req.nextUrl.searchParams.has("uploads")) {
+    return handleCreateMultipart(
+      db,
+      auth,
+      slug,
+      key,
+      req.headers.get("content-type") ?? "application/octet-stream",
+    );
   }
 
   // CompleteMultipartUpload: POST /{slug}/{key}?uploadId=X
-  const uploadId = req.nextUrl.searchParams.get('uploadId');
+  const uploadId = req.nextUrl.searchParams.get("uploadId");
   if (uploadId) {
     return handleCompleteMultipart(req, db, auth, ws, slug, key, uploadId);
   }
 
-  return invalidRequest('Unsupported POST operation');
+  return invalidRequest("Unsupported POST operation");
 }
 
 // ── Operation handlers ──────────────────────────────────────────────────
@@ -214,51 +297,116 @@ async function handlePutObject(
   ws: typeof workspaces.$inferSelect,
   key: string,
 ): Promise<Response> {
-  const contentLength = Number.parseInt(req.headers.get('content-length') ?? '', 10);
-  const contentType = req.headers.get('content-type') ?? 'application/octet-stream';
+  const contentLength = Number.parseInt(
+    req.headers.get("content-length") ?? "",
+    10,
+  );
+  const contentType =
+    req.headers.get("content-type") ?? "application/octet-stream";
 
   if (!Number.isFinite(contentLength) || contentLength < 0) {
-    return invalidRequest('Invalid content length');
+    return invalidRequest("Invalid content length");
   }
-  if (!req.body) return invalidRequest('Request body is required');
+  if (!req.body) return invalidRequest("Request body is required");
 
   const { dirSegments, fileName } = parseS3Key(key);
-  if (!fileName) return invalidRequest('Object key must include a file name');
+  if (!fileName) return invalidRequest("Object key must include a file name");
 
   try {
-    const [existing] = await db.select({ id: files.id, size: files.size, storagePath: files.storagePath })
-      .from(files).where(and(eq(files.workspaceId, auth.workspaceId), eq(files.s3Key, key)));
+    const [existing] = await db
+      .select({
+        id: files.id,
+        size: files.size,
+        storagePath: files.storagePath,
+        storageProvider: files.storageProvider,
+      })
+      .from(files)
+      .where(
+        and(eq(files.workspaceId, auth.workspaceId), eq(files.s3Key, key)),
+      );
 
-    const projectedUsed = (ws.storageUsed ?? 0) - (existing?.size ?? 0) + contentLength;
+    const projectedUsed =
+      (ws.storageUsed ?? 0) - (existing?.size ?? 0) + contentLength;
     if (projectedUsed > (ws.storageLimit ?? 0)) return quotaExceeded();
 
-    const folderId = await resolveOrCreateFolderChain(db, auth.workspaceId, auth.userId, dirSegments);
+    const folderId = await resolveOrCreateFolderChain(
+      db,
+      auth.workspaceId,
+      auth.userId,
+      dirSegments,
+    );
 
-    const storage = createStorage();
+    const currentProvider = await getStorageProviderForWorkspace(
+      auth.workspaceId,
+    );
+    const storage = await createStorageForWorkspace(auth.workspaceId);
     const fileId = existing?.id ?? randomUUID();
-    const storagePath = existing?.storagePath ?? `${auth.workspaceId}/${fileId}/${fileName}`;
+    const storagePath =
+      existing?.storagePath ?? `${auth.workspaceId}/${fileId}/${fileName}`;
 
-    await storage.upload({ path: storagePath, data: req.body as unknown as ReadableStream, contentType });
+    await storage.upload({
+      path: storagePath,
+      data: req.body as unknown as ReadableStream,
+      contentType,
+    });
 
     if (existing) {
-      await db.update(files).set({ size: contentLength, mimeType: contentType, storagePath, updatedAt: new Date() })
+      // If the provider changed, clean up old data from the previous backend
+      if (existing.storageProvider !== currentProvider) {
+        try {
+          const oldStorage = await createStorageForFile(
+            auth.workspaceId,
+            existing.storageProvider,
+          );
+          await oldStorage.delete(existing.storagePath);
+        } catch {
+          /* best effort */
+        }
+      }
+
+      await db
+        .update(files)
+        .set({
+          size: contentLength,
+          mimeType: contentType,
+          storagePath,
+          storageProvider: currentProvider,
+          updatedAt: new Date(),
+        })
         .where(eq(files.id, existing.id));
       const sizeDiff = contentLength - existing.size;
       if (sizeDiff !== 0) {
-        await db.update(workspaces).set({ storageUsed: sql`GREATEST(${workspaces.storageUsed} + ${sizeDiff}, 0)` })
+        await db
+          .update(workspaces)
+          .set({
+            storageUsed: sql`GREATEST(${workspaces.storageUsed} + ${sizeDiff}, 0)`,
+          })
           .where(eq(workspaces.id, auth.workspaceId));
       }
     } else {
       await db.insert(files).values({
-        id: fileId, workspaceId: auth.workspaceId, userId: auth.userId, folderId,
-        name: fileName, mimeType: contentType, size: contentLength, storagePath,
-        storageProvider: process.env.BLOB_STORAGE_PROVIDER ?? 'local', status: 'ready', s3Key: key,
+        id: fileId,
+        workspaceId: auth.workspaceId,
+        userId: auth.userId,
+        folderId,
+        name: fileName,
+        mimeType: contentType,
+        size: contentLength,
+        storagePath,
+        storageProvider: await getStorageProviderForWorkspace(auth.workspaceId),
+        status: "ready",
+        s3Key: key,
       });
-      await db.update(workspaces).set({ storageUsed: sql`${workspaces.storageUsed} + ${contentLength}` })
+      await db
+        .update(workspaces)
+        .set({ storageUsed: sql`${workspaces.storageUsed} + ${contentLength}` })
         .where(eq(workspaces.id, auth.workspaceId));
     }
 
-    return new Response(null, { status: 200, headers: { 'ETag': `"${fileId}"` } });
+    return new Response(null, {
+      status: 200,
+      headers: { ETag: `"${fileId}"` },
+    });
   } catch (err) {
     return internalError((err as Error).message);
   }
@@ -283,7 +431,7 @@ async function handleCreateMultipart(
     storagePath,
     contentType,
     userId: auth.userId,
-    status: 'in_progress',
+    status: "in_progress",
   });
 
   return xmlResponse(initiateMultipartUploadXml(bucket, key, uploadId));
@@ -298,51 +446,63 @@ async function handleUploadPart(
   partNumber: number,
 ): Promise<Response> {
   // Verify the multipart upload exists
-  const [upload] = await db.select().from(s3MultipartUploads)
-    .where(and(
-      eq(s3MultipartUploads.uploadId, uploadId),
-      eq(s3MultipartUploads.workspaceId, auth.workspaceId),
-      eq(s3MultipartUploads.status, 'in_progress'),
-    ));
+  const [upload] = await db
+    .select()
+    .from(s3MultipartUploads)
+    .where(
+      and(
+        eq(s3MultipartUploads.uploadId, uploadId),
+        eq(s3MultipartUploads.workspaceId, auth.workspaceId),
+        eq(s3MultipartUploads.status, "in_progress"),
+      ),
+    );
 
   if (!upload) return noSuchUpload();
-  if (upload.s3Key !== key) return invalidRequest('Upload key mismatch');
-  if (!req.body) return invalidRequest('Request body is required');
+  if (upload.s3Key !== key) return invalidRequest("Upload key mismatch");
+  if (!req.body) return invalidRequest("Request body is required");
 
-  const contentLength = Number.parseInt(req.headers.get('content-length') ?? '', 10);
+  const contentLength = Number.parseInt(
+    req.headers.get("content-length") ?? "",
+    10,
+  );
   if (!Number.isFinite(contentLength) || contentLength < 0) {
-    return invalidRequest('Invalid content length');
+    return invalidRequest("Invalid content length");
   }
 
   // Store the part in storage with a part-specific path
   const partPath = `${upload.storagePath}.part${partNumber}`;
-  const storage = createStorage();
+  const storage = await createStorageForWorkspace(auth.workspaceId);
 
   try {
     await storage.upload({
       path: partPath,
       data: req.body as unknown as ReadableStream,
-      contentType: 'application/octet-stream',
+      contentType: "application/octet-stream",
     });
 
     // Generate ETag from part number + upload ID
-    const etag = createHash('md5').update(`${uploadId}-${partNumber}`).digest('hex');
+    const etag = createHash("md5")
+      .update(`${uploadId}-${partNumber}`)
+      .digest("hex");
 
     // Upsert the part record
-    await db.insert(s3MultipartParts).values({
-      uploadId,
-      partNumber,
-      storagePath: partPath,
-      size: contentLength,
-      etag,
-    }).onConflictDoUpdate({
-      target: [s3MultipartParts.uploadId, s3MultipartParts.partNumber],
-      set: { storagePath: partPath, size: contentLength, etag },
-    });
+    await db
+      .insert(s3MultipartParts)
+      .values({
+        uploadId,
+        partNumber,
+        storagePath: partPath,
+        size: contentLength,
+        etag,
+      })
+      .onConflictDoUpdate({
+        target: [s3MultipartParts.uploadId, s3MultipartParts.partNumber],
+        set: { storagePath: partPath, size: contentLength, etag },
+      });
 
     return new Response(null, {
       status: 200,
-      headers: { 'ETag': `"${etag}"` },
+      headers: { ETag: `"${etag}"` },
     });
   } catch (err) {
     return internalError((err as Error).message);
@@ -350,7 +510,7 @@ async function handleUploadPart(
 }
 
 function createMultipartObjectStream(
-  storage: ReturnType<typeof createStorage>,
+  storage: import("@openstore/storage").StorageProvider,
   parts: Array<{ storagePath: string }>,
 ): ReadableStream<Uint8Array> {
   let currentReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
@@ -365,8 +525,12 @@ function createMultipartObjectStream(
             return;
           }
 
-          const partResult = await storage.download(parts[currentIndex]!.storagePath);
-          currentReader = (partResult.data as ReadableStream<Uint8Array>).getReader();
+          const partResult = await storage.download(
+            parts[currentIndex]!.storagePath,
+          );
+          currentReader = (
+            partResult.data as ReadableStream<Uint8Array>
+          ).getReader();
           currentIndex += 1;
         }
 
@@ -401,40 +565,55 @@ async function handleCompleteMultipart(
   key: string,
   uploadId: string,
 ): Promise<Response> {
-  const [upload] = await db.select().from(s3MultipartUploads)
-    .where(and(
-      eq(s3MultipartUploads.uploadId, uploadId),
-      eq(s3MultipartUploads.workspaceId, auth.workspaceId),
-      eq(s3MultipartUploads.status, 'in_progress'),
-    ));
+  const [upload] = await db
+    .select()
+    .from(s3MultipartUploads)
+    .where(
+      and(
+        eq(s3MultipartUploads.uploadId, uploadId),
+        eq(s3MultipartUploads.workspaceId, auth.workspaceId),
+        eq(s3MultipartUploads.status, "in_progress"),
+      ),
+    );
 
   if (!upload) return noSuchUpload();
-  if (upload.s3Key !== key) return invalidRequest('Upload key mismatch');
+  if (upload.s3Key !== key) return invalidRequest("Upload key mismatch");
 
   // Get all parts sorted by part number
-  const parts = await db.select().from(s3MultipartParts)
+  const parts = await db
+    .select()
+    .from(s3MultipartParts)
     .where(eq(s3MultipartParts.uploadId, uploadId))
     .orderBy(s3MultipartParts.partNumber);
 
-  if (parts.length === 0) return invalidRequest('No parts uploaded');
+  if (parts.length === 0) return invalidRequest("No parts uploaded");
 
   const [existing] = await db
-    .select({ id: files.id, size: files.size, storagePath: files.storagePath })
+    .select({
+      id: files.id,
+      size: files.size,
+      storagePath: files.storagePath,
+      storageProvider: files.storageProvider,
+    })
     .from(files)
     .where(and(eq(files.workspaceId, auth.workspaceId), eq(files.s3Key, key)));
 
   const totalSize = parts.reduce((sum, part) => sum + part.size, 0);
-  const projectedUsed = (ws.storageUsed ?? 0) - (existing?.size ?? 0) + totalSize;
+  const projectedUsed =
+    (ws.storageUsed ?? 0) - (existing?.size ?? 0) + totalSize;
   if (projectedUsed > (ws.storageLimit ?? 0)) {
     return quotaExceeded();
   }
 
   const { dirSegments, fileName } = parseS3Key(key);
   if (!fileName) {
-    return invalidRequest('Object key must include a file name');
+    return invalidRequest("Object key must include a file name");
   }
 
-  const storage = createStorage();
+  const currentProvider = await getStorageProviderForWorkspace(
+    auth.workspaceId,
+  );
+  const storage = await createStorageForWorkspace(auth.workspaceId);
 
   try {
     // Stream parts into a single logical object to avoid buffering entire uploads.
@@ -445,42 +624,80 @@ async function handleCompleteMultipart(
       contentType: upload.contentType,
     });
 
-    const folderId = await resolveOrCreateFolderChain(db, auth.workspaceId, auth.userId, dirSegments);
-    const etag = createHash('md5').update(uploadId).digest('hex');
+    const folderId = await resolveOrCreateFolderChain(
+      db,
+      auth.workspaceId,
+      auth.userId,
+      dirSegments,
+    );
+    const etag = createHash("md5").update(uploadId).digest("hex");
 
     const sizeDiff = totalSize - (existing?.size ?? 0);
     if (existing) {
-      await db.update(files).set({
-        size: totalSize, mimeType: upload.contentType, storagePath: upload.storagePath,
-        checksum: etag, updatedAt: new Date(),
-      }).where(eq(files.id, existing.id));
-
-      if (existing.storagePath !== upload.storagePath) {
+      // Clean up old data from previous backend if provider changed
+      if (existing.storageProvider !== currentProvider) {
+        try {
+          const oldStorage = await createStorageForFile(
+            auth.workspaceId,
+            existing.storageProvider,
+          );
+          await oldStorage.delete(existing.storagePath);
+        } catch {
+          /* best effort */
+        }
+      } else if (existing.storagePath !== upload.storagePath) {
         try {
           await storage.delete(existing.storagePath);
         } catch {
           /* best effort */
         }
       }
+
+      await db
+        .update(files)
+        .set({
+          size: totalSize,
+          mimeType: upload.contentType,
+          storagePath: upload.storagePath,
+          storageProvider: currentProvider,
+          checksum: etag,
+          updatedAt: new Date(),
+        })
+        .where(eq(files.id, existing.id));
     } else {
       await db.insert(files).values({
-        id: randomUUID(), workspaceId: auth.workspaceId, userId: auth.userId, folderId,
-        name: fileName, mimeType: upload.contentType, size: totalSize,
+        id: randomUUID(),
+        workspaceId: auth.workspaceId,
+        userId: auth.userId,
+        folderId,
+        name: fileName,
+        mimeType: upload.contentType,
+        size: totalSize,
         storagePath: upload.storagePath,
-        storageProvider: process.env.BLOB_STORAGE_PROVIDER ?? 'local',
-        status: 'ready', s3Key: key, checksum: etag,
+        storageProvider: await getStorageProviderForWorkspace(auth.workspaceId),
+        status: "ready",
+        s3Key: key,
+        checksum: etag,
       });
     }
 
     if (sizeDiff !== 0) {
-      await db.update(workspaces).set({ storageUsed: sql`GREATEST(${workspaces.storageUsed} + ${sizeDiff}, 0)` })
+      await db
+        .update(workspaces)
+        .set({
+          storageUsed: sql`GREATEST(${workspaces.storageUsed} + ${sizeDiff}, 0)`,
+        })
         .where(eq(workspaces.id, auth.workspaceId));
     }
 
     // Mark multipart upload as complete and clean up parts records
-    await db.update(s3MultipartUploads).set({ status: 'completed' })
+    await db
+      .update(s3MultipartUploads)
+      .set({ status: "completed" })
       .where(eq(s3MultipartUploads.id, upload.id));
-    await db.delete(s3MultipartParts).where(eq(s3MultipartParts.uploadId, uploadId));
+    await db
+      .delete(s3MultipartParts)
+      .where(eq(s3MultipartParts.uploadId, uploadId));
 
     for (const part of parts) {
       try {
@@ -501,26 +718,40 @@ async function handleAbortMultipart(
   auth: AuthResult,
   uploadId: string,
 ): Promise<Response> {
-  const [upload] = await db.select().from(s3MultipartUploads)
-    .where(and(
-      eq(s3MultipartUploads.uploadId, uploadId),
-      eq(s3MultipartUploads.workspaceId, auth.workspaceId),
-    ));
+  const [upload] = await db
+    .select()
+    .from(s3MultipartUploads)
+    .where(
+      and(
+        eq(s3MultipartUploads.uploadId, uploadId),
+        eq(s3MultipartUploads.workspaceId, auth.workspaceId),
+      ),
+    );
 
   if (!upload) return noSuchUpload();
 
   // Delete part files
-  const parts = await db.select().from(s3MultipartParts)
+  const parts = await db
+    .select()
+    .from(s3MultipartParts)
     .where(eq(s3MultipartParts.uploadId, uploadId));
 
-  const storage = createStorage();
+  const storage = await createStorageForWorkspace(auth.workspaceId);
   for (const part of parts) {
-    try { await storage.delete(part.storagePath); } catch { /* best effort */ }
+    try {
+      await storage.delete(part.storagePath);
+    } catch {
+      /* best effort */
+    }
   }
 
   // Clean up DB records
-  await db.delete(s3MultipartParts).where(eq(s3MultipartParts.uploadId, uploadId));
-  await db.delete(s3MultipartUploads).where(eq(s3MultipartUploads.id, upload.id));
+  await db
+    .delete(s3MultipartParts)
+    .where(eq(s3MultipartParts.uploadId, uploadId));
+  await db
+    .delete(s3MultipartUploads)
+    .where(eq(s3MultipartUploads.id, upload.id));
 
   return new Response(null, { status: 204 });
 }
@@ -533,16 +764,28 @@ async function handleListObjects(
   workspaceId: string,
   bucket: string,
 ): Promise<Response> {
-  const prefix = req.nextUrl.searchParams.get('prefix') ?? '';
-  const delimiter = req.nextUrl.searchParams.get('delimiter') ?? '';
-  const maxKeys = Math.min(parseInt(req.nextUrl.searchParams.get('max-keys') ?? '1000', 10), 1000);
-  const continuationToken = req.nextUrl.searchParams.get('continuation-token');
-  const offset = continuationToken ? parseInt(Buffer.from(continuationToken, 'base64url').toString(), 10) : 0;
+  const prefix = req.nextUrl.searchParams.get("prefix") ?? "";
+  const delimiter = req.nextUrl.searchParams.get("delimiter") ?? "";
+  const maxKeys = Math.min(
+    parseInt(req.nextUrl.searchParams.get("max-keys") ?? "1000", 10),
+    1000,
+  );
+  const continuationToken = req.nextUrl.searchParams.get("continuation-token");
+  const offset = continuationToken
+    ? parseInt(Buffer.from(continuationToken, "base64url").toString(), 10)
+    : 0;
 
   // Lazy backfill s3Keys for web-uploaded files
-  const filesWithoutKey = await db.select({ id: files.id, name: files.name, folderId: files.folderId })
+  const filesWithoutKey = await db
+    .select({ id: files.id, name: files.name, folderId: files.folderId })
     .from(files)
-    .where(and(eq(files.workspaceId, workspaceId), isNull(files.s3Key), eq(files.status, 'ready')))
+    .where(
+      and(
+        eq(files.workspaceId, workspaceId),
+        isNull(files.s3Key),
+        eq(files.status, "ready"),
+      ),
+    )
     .limit(100);
 
   for (const f of filesWithoutKey) {
@@ -551,14 +794,30 @@ async function handleListObjects(
   }
 
   const condition = prefix
-    ? and(eq(files.workspaceId, workspaceId), like(files.s3Key, `${prefix}%`), eq(files.status, 'ready'))
-    : and(eq(files.workspaceId, workspaceId), eq(files.status, 'ready'));
+    ? and(
+        eq(files.workspaceId, workspaceId),
+        like(files.s3Key, `${prefix}%`),
+        eq(files.status, "ready"),
+      )
+    : and(eq(files.workspaceId, workspaceId), eq(files.status, "ready"));
 
-  const allMatching = await db.select({
-    key: files.s3Key, size: files.size, lastModified: files.updatedAt, etag: files.id,
-  }).from(files).where(condition!).orderBy(files.s3Key);
+  const allMatching = await db
+    .select({
+      key: files.s3Key,
+      size: files.size,
+      lastModified: files.updatedAt,
+      etag: files.id,
+    })
+    .from(files)
+    .where(condition!)
+    .orderBy(files.s3Key);
 
-  const contents: { key: string; lastModified: Date; size: number; etag: string }[] = [];
+  const contents: {
+    key: string;
+    lastModified: Date;
+    size: number;
+    etag: string;
+  }[] = [];
   const commonPrefixSet = new Set<string>();
 
   for (const row of allMatching) {
@@ -568,27 +827,46 @@ async function handleListObjects(
       const prefixEnd = keyAfterPrefix.indexOf(delimiter) + delimiter.length;
       commonPrefixSet.add(prefix + keyAfterPrefix.slice(0, prefixEnd));
     } else {
-      contents.push({ key: row.key, lastModified: row.lastModified, size: row.size, etag: row.etag });
+      contents.push({
+        key: row.key,
+        lastModified: row.lastModified,
+        size: row.size,
+        etag: row.etag,
+      });
     }
   }
 
   const commonPrefixes = Array.from(commonPrefixSet).sort();
   const allItems = [
-    ...contents.map((c) => ({ type: 'object' as const, ...c })),
-    ...commonPrefixes.map((p) => ({ type: 'prefix' as const, prefix: p })),
+    ...contents.map((c) => ({ type: "object" as const, ...c })),
+    ...commonPrefixes.map((p) => ({ type: "prefix" as const, prefix: p })),
   ];
 
   const paginated = allItems.slice(offset, offset + maxKeys);
   const isTruncated = offset + maxKeys < allItems.length;
-  const nextToken = isTruncated ? Buffer.from(String(offset + maxKeys)).toString('base64url') : undefined;
+  const nextToken = isTruncated
+    ? Buffer.from(String(offset + maxKeys)).toString("base64url")
+    : undefined;
 
-  const paginatedContents = paginated.filter((i) => i.type === 'object') as typeof contents;
-  const paginatedPrefixes = paginated.filter((i) => i.type === 'prefix').map((i) => (i as any).prefix as string);
+  const paginatedContents = paginated.filter(
+    (i) => i.type === "object",
+  ) as typeof contents;
+  const paginatedPrefixes = paginated
+    .filter((i) => i.type === "prefix")
+    .map((i) => (i as any).prefix as string);
 
-  return xmlResponse(listObjectsV2Xml({
-    bucket, prefix, delimiter, maxKeys, isTruncated,
-    contents: paginatedContents, commonPrefixes: paginatedPrefixes,
-    continuationToken: continuationToken ?? undefined,
-    nextContinuationToken: nextToken, keyCount: paginated.length,
-  }));
+  return xmlResponse(
+    listObjectsV2Xml({
+      bucket,
+      prefix,
+      delimiter,
+      maxKeys,
+      isTruncated,
+      contents: paginatedContents,
+      commonPrefixes: paginatedPrefixes,
+      continuationToken: continuationToken ?? undefined,
+      nextContinuationToken: nextToken,
+      keyCount: paginated.length,
+    }),
+  );
 }

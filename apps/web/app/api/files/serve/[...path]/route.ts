@@ -1,8 +1,12 @@
-import { NextRequest } from 'next/server';
-import { createStorage, verifyLocalFileSignature } from '@openstore/storage';
+import { NextRequest } from "next/server";
+import { verifyLocalFileSignature } from "@openstore/storage";
+import { createStorageForFile } from "../../../../../server/storage";
+import { getDb } from "@openstore/database/client";
+import { files } from "@openstore/database";
+import { eq } from "drizzle-orm";
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 type RouteParams = {
   params: Promise<{ path: string[] }>;
@@ -10,42 +14,53 @@ type RouteParams = {
 
 export async function GET(req: NextRequest, { params }: RouteParams) {
   const { path } = await params;
-  const objectPath = path.join('/');
+  const objectPath = path.join("/");
 
-  const expiresParam = req.nextUrl.searchParams.get('exp');
-  const signature = req.nextUrl.searchParams.get('sig');
+  const expiresParam = req.nextUrl.searchParams.get("exp");
+  const signature = req.nextUrl.searchParams.get("sig");
 
   if (!objectPath || !expiresParam || !signature) {
-    return new Response('Access denied', { status: 403 });
+    return new Response("Access denied", { status: 403 });
   }
 
   const expiresAt = Number.parseInt(expiresParam, 10);
   if (!Number.isFinite(expiresAt)) {
-    return new Response('Access denied', { status: 403 });
+    return new Response("Access denied", { status: 403 });
   }
 
   const now = Math.floor(Date.now() / 1000);
   if (expiresAt < now) {
-    return new Response('Link expired', { status: 410 });
+    return new Response("Link expired", { status: 410 });
   }
 
   if (!verifyLocalFileSignature(objectPath, expiresAt, signature)) {
-    return new Response('Access denied', { status: 403 });
+    return new Response("Access denied", { status: 403 });
   }
 
-  const storage = createStorage();
+  // Look up file record to determine which storage backend it lives in
+  const workspaceId = path[0]!;
+  const db = getDb();
+  const [fileRecord] = await db
+    .select({ storageProvider: files.storageProvider })
+    .from(files)
+    .where(eq(files.storagePath, objectPath))
+    .limit(1);
+
+  const storageProvider =
+    fileRecord?.storageProvider ?? process.env.BLOB_STORAGE_PROVIDER ?? "local";
+  const storage = await createStorageForFile(workspaceId, storageProvider);
 
   try {
     const file = await storage.download(objectPath);
     return new Response(file.data, {
       status: 200,
       headers: {
-        'Content-Type': file.contentType,
-        'Content-Length': String(file.size),
-        'Cache-Control': 'private, max-age=60',
+        "Content-Type": file.contentType,
+        "Content-Length": String(file.size),
+        "Cache-Control": "private, max-age=60",
       },
     });
   } catch {
-    return new Response('File not found', { status: 404 });
+    return new Response("File not found", { status: 404 });
   }
 }

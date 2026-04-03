@@ -1,7 +1,7 @@
-import { TRPCError } from '@trpc/server';
-import { z } from 'zod';
-import { createStorage } from '@openstore/storage';
-import { createRouter, workspaceProcedure } from '../init';
+import { TRPCError } from "@trpc/server";
+import { z } from "zod";
+import { createStorageForWorkspace } from "../../../server/storage";
+import { createRouter, workspaceProcedure } from "../init";
 import {
   closeVfsShellSession,
   createVfsShellSession,
@@ -9,20 +9,20 @@ import {
   getVfsShellSessionSummary,
   VfsShellSessionAccessDeniedError,
   VfsShellSessionNotFoundError,
-} from '../../vfs/vfs-shell-session';
+} from "../../vfs/vfs-shell-session";
 
 function mapShellSessionError(error: unknown): never {
   if (error instanceof VfsShellSessionNotFoundError) {
     throw new TRPCError({
-      code: 'NOT_FOUND',
-      message: 'Shell session not found',
+      code: "NOT_FOUND",
+      message: "Shell session not found",
     });
   }
 
   if (error instanceof VfsShellSessionAccessDeniedError) {
     throw new TRPCError({
-      code: 'FORBIDDEN',
-      message: 'Shell session access denied',
+      code: "FORBIDDEN",
+      message: "Shell session access denied",
     });
   }
 
@@ -39,7 +39,7 @@ export const vfsShellRouter = createRouter({
     .mutation(async ({ ctx, input }) => {
       return createVfsShellSession({
         db: ctx.db,
-        storage: createStorage(),
+        storage: await createStorageForWorkspace(ctx.workspaceId),
         workspaceId: ctx.workspaceId,
         userId: ctx.userId,
         cwd: input.cwd,
