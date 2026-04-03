@@ -4,6 +4,7 @@ import { randomUUID } from 'crypto';
 import { createRouter, workspaceProcedure } from '../init';
 import { files, folders, workspaces } from '@openstore/database';
 import { createStorage } from '@openstore/storage';
+import { qmdClient, streamToString } from '../../plugins/handlers/qmd-client';
 import {
   initiateUploadSchema,
   completeUploadSchema,
@@ -169,6 +170,24 @@ export const uploadsRouter = createRouter({
           storageUsed: sql`${workspaces.storageUsed} + ${file.size}`,
         })
         .where(eq(workspaces.id, workspaceId));
+
+      // Fire-and-forget: index file for QMD search
+      if (qmdClient.isConfigured() && qmdClient.shouldIndex(file.mimeType)) {
+        void (async () => {
+          try {
+            const storage = createStorage();
+            const { data } = await storage.download(file.storagePath);
+            const content = await streamToString(data);
+            await qmdClient.indexFile({
+              workspaceId,
+              fileId: input.fileId,
+              fileName: file.name,
+              mimeType: file.mimeType,
+              content,
+            });
+          } catch {}
+        })();
+      }
 
       return updated;
     }),

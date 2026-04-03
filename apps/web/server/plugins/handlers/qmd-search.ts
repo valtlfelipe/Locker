@@ -1,4 +1,6 @@
+import { createStorage } from '@openstore/storage';
 import { getBuiltinPluginBySlug } from '../catalog';
+import { qmdClient, streamToString } from './qmd-client';
 import type {
   PluginHandler,
   PluginContext,
@@ -6,42 +8,6 @@ import type {
   ActionTarget,
   SearchResult,
 } from '../types';
-
-// ---------------------------------------------------------------------------
-// Fallback scoring (used when no external QMD endpoint is configured)
-// ---------------------------------------------------------------------------
-
-function scoreByQuery(name: string, query: string, tokens: string[]): number {
-  const normalizedName = name.toLowerCase();
-  let score = 0;
-
-  if (normalizedName === query) score += 80;
-  if (normalizedName.startsWith(query)) score += 35;
-  if (normalizedName.includes(query)) score += 15;
-
-  for (const token of tokens) {
-    if (token.length >= 2 && normalizedName.includes(token)) {
-      score += 7;
-    }
-  }
-
-  // Slightly favor document types that tend to be knowledge-heavy.
-  if (
-    normalizedName.endsWith('.pdf') ||
-    normalizedName.endsWith('.md') ||
-    normalizedName.endsWith('.doc') ||
-    normalizedName.endsWith('.docx') ||
-    normalizedName.endsWith('.txt')
-  ) {
-    score += 4;
-  }
-
-  return score;
-}
-
-// ---------------------------------------------------------------------------
-// Handler
-// ---------------------------------------------------------------------------
 
 const manifest = getBuiltinPluginBySlug('qmd-search')!;
 
@@ -54,29 +20,43 @@ export const qmdSearchHandler: PluginHandler = {
     target: ActionTarget,
   ): Promise<ActionResult> {
     if (actionId === 'qmd.reindex-file' && target.type === 'file') {
-      const endpointUrl = ctx.config.endpointUrl;
+      if (!qmdClient.isConfigured()) {
+        return {
+          status: 'success',
+          message: 'QMD service is not configured',
+        };
+      }
 
-      if (typeof endpointUrl === 'string' && endpointUrl.length > 0) {
-        try {
-          const headers: Record<string, string> = {
-            'Content-Type': 'application/json',
-          };
-          if (ctx.secrets.apiKey) {
-            headers['Authorization'] = `Bearer ${ctx.secrets.apiKey}`;
-          }
+      try {
+        const { files } = await import('@openstore/database');
+        const { eq, and } = await import('drizzle-orm');
 
-          await fetch(`${endpointUrl}/reindex`, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({
-              fileId: target.id,
-              workspaceId: ctx.workspaceId,
-            }),
-            signal: AbortSignal.timeout(5_000),
+        const [file] = await ctx.db
+          .select({ storagePath: files.storagePath, mimeType: files.mimeType })
+          .from(files)
+          .where(
+            and(
+              eq(files.id, target.id),
+              eq(files.workspaceId, ctx.workspaceId),
+            ),
+          )
+          .limit(1);
+
+        if (file && qmdClient.shouldIndex(file.mimeType)) {
+          const storage = createStorage();
+          const { data } = await storage.download(file.storagePath);
+          const content = await streamToString(data);
+
+          await qmdClient.indexFile({
+            workspaceId: ctx.workspaceId,
+            fileId: target.id,
+            fileName: target.name,
+            mimeType: file.mimeType,
+            content,
           });
-        } catch {
-          // External endpoint may be unavailable; still return queued
         }
+      } catch {
+        // Best-effort indexing
       }
 
       return {
@@ -95,44 +75,16 @@ export const qmdSearchHandler: PluginHandler = {
     ctx: PluginContext,
     params: { query: string; folderId?: string | null; limit?: number },
   ): Promise<SearchResult[]> {
-    const endpointUrl = ctx.config.endpointUrl;
-
-    // If an external QMD endpoint is configured, call it
-    if (typeof endpointUrl === 'string' && endpointUrl.length > 0) {
+    // Use the QMD service if configured
+    if (qmdClient.isConfigured()) {
       try {
-        const headers: Record<string, string> = {
-          'Content-Type': 'application/json',
-        };
-        if (ctx.secrets.apiKey) {
-          headers['Authorization'] = `Bearer ${ctx.secrets.apiKey}`;
-        }
-
-        const res = await fetch(`${endpointUrl}/search`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            query: params.query,
-            workspaceId: ctx.workspaceId,
-            folderId: params.folderId ?? null,
-            limit: params.limit ?? 20,
-          }),
-          signal: AbortSignal.timeout(2_000),
+        return await qmdClient.search({
+          workspaceId: ctx.workspaceId,
+          query: params.query,
+          limit: params.limit ?? 20,
         });
-
-        if (res.ok) {
-          const data = (await res.json()) as {
-            results?: Array<{ fileId: string; score: number; snippet?: string }>;
-          };
-          if (Array.isArray(data.results)) {
-            return data.results.map((r) => ({
-              fileId: r.fileId,
-              score: r.score,
-              snippet: r.snippet,
-            }));
-          }
-        }
       } catch {
-        // Fall through to local scoring
+        // Fall through to filename scoring
       }
     }
 
@@ -163,3 +115,16 @@ export const qmdSearchHandler: PluginHandler = {
       .sort((a, b) => b.score - a.score);
   },
 };
+
+function scoreByQuery(name: string, query: string, tokens: string[]): number {
+  const n = name.toLowerCase();
+  let score = 0;
+  if (n === query) score += 80;
+  if (n.startsWith(query)) score += 35;
+  if (n.includes(query)) score += 15;
+  for (const t of tokens) {
+    if (t.length >= 2 && n.includes(t)) score += 7;
+  }
+  if (/\.(pdf|md|doc|docx|txt)$/.test(n)) score += 4;
+  return score;
+}

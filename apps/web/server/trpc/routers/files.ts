@@ -5,6 +5,7 @@ import { files, workspaces, folders } from '@openstore/database';
 import { createStorage } from '@openstore/storage';
 import { renameFileSchema, moveItemSchema, paginationSchema, sortSchema } from '@openstore/common';
 import { enhanceSearchResultsWithPlugins } from '../../plugins/search';
+import { qmdClient } from '../../plugins/handlers/qmd-client';
 
 export const filesRouter = createRouter({
   list: workspaceProcedure
@@ -147,6 +148,14 @@ export const filesRouter = createRouter({
       const storage = createStorage();
       await storage.delete(file.storagePath);
 
+      // De-index from QMD search
+      if (qmdClient.isConfigured()) {
+        void qmdClient.deindexFile({
+          workspaceId: ctx.workspaceId,
+          fileId: file.id,
+        }).catch(() => {});
+      }
+
       // Delete from database
       await ctx.db.delete(files).where(eq(files.id, input.id));
 
@@ -173,6 +182,12 @@ export const filesRouter = createRouter({
 
         if (file) {
           await storage.delete(file.storagePath);
+          if (qmdClient.isConfigured()) {
+            void qmdClient.deindexFile({
+              workspaceId: ctx.workspaceId,
+              fileId: file.id,
+            }).catch(() => {});
+          }
           await ctx.db.delete(files).where(eq(files.id, id));
           totalSize += file.size;
         }

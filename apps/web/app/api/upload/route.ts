@@ -7,6 +7,7 @@ import { createStorage } from '@openstore/storage';
 import { MAX_FILE_SIZE } from '@openstore/common';
 import { eq, and, sql } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
+import { qmdClient, streamToString } from '../../../server/plugins/handlers/qmd-client';
 
 export async function POST(req: NextRequest) {
   const session = await auth.api.getSession({ headers: await headers() });
@@ -173,6 +174,23 @@ export async function POST(req: NextRequest) {
     .update(workspaces)
     .set({ storageUsed: sql`${workspaces.storageUsed} + ${billedSize}` })
     .where(eq(workspaces.id, workspaceId));
+
+  // Fire-and-forget: index file for QMD search
+  if (newFile && qmdClient.isConfigured() && qmdClient.shouldIndex(newFile.mimeType)) {
+    void (async () => {
+      try {
+        const dl = await storage.download(newFile.storagePath);
+        const content = await streamToString(dl.data);
+        await qmdClient.indexFile({
+          workspaceId,
+          fileId: newFile.id,
+          fileName: newFile.name,
+          mimeType: newFile.mimeType,
+          content,
+        });
+      } catch {}
+    })();
+  }
 
   return NextResponse.json({ file: newFile });
 }

@@ -1,7 +1,7 @@
-'use client';
+"use client";
 
-import { useState, useCallback } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import {
   FolderPlus,
   Upload,
@@ -15,57 +15,59 @@ import {
   Home,
   BarChart3,
   Sparkles,
-} from 'lucide-react';
-import { trpc } from '@/lib/trpc/client';
-import { formatBytes, formatDate } from '@/lib/utils';
-import { FileIcon } from '@/components/file-icon';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Separator } from '@/components/ui/separator';
-import { SidebarTrigger } from '@/components/ui/sidebar';
+} from "lucide-react";
+import { trpc } from "@/lib/trpc/client";
+import { formatBytes, formatDate } from "@/lib/utils";
+import { FileIcon } from "@/components/file-icon";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Separator } from "@/components/ui/separator";
+import { SidebarTrigger } from "@/components/ui/sidebar";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
-import { UploadDialog } from '@/components/upload-dialog';
-import { CreateFolderDialog } from '@/components/create-folder-dialog';
-import { RenameDialog } from '@/components/rename-dialog';
-import { ShareDialog } from '@/components/share-dialog';
-import { CreateTrackedLinkDialog } from '@/components/create-tracked-link-dialog';
-import { DroppableFolderRow } from '@/components/file-explorer/droppable-folder-row';
-import { DraggableFileRow } from '@/components/file-explorer/draggable-file-row';
-import { DesktopDropOverlay } from '@/components/desktop-drop-overlay';
-import { useFileDrop } from '@/hooks/use-file-drop';
-import { useWorkspace } from '@/lib/workspace-context';
-import { toast } from 'sonner';
+} from "@/components/ui/dropdown-menu";
+import { UploadDialog } from "@/components/upload-dialog";
+import { CreateFolderDialog } from "@/components/create-folder-dialog";
+import { RenameDialog } from "@/components/rename-dialog";
+import { ShareDialog } from "@/components/share-dialog";
+import { CreateTrackedLinkDialog } from "@/components/create-tracked-link-dialog";
+import { DroppableFolderRow } from "@/components/file-explorer/droppable-folder-row";
+import { DraggableFileRow } from "@/components/file-explorer/draggable-file-row";
+import { DesktopDropOverlay } from "@/components/desktop-drop-overlay";
+import { useFileDrop } from "@/hooks/use-file-drop";
+import { useWorkspace } from "@/lib/workspace-context";
+import { toast } from "sonner";
 
 const ROW_GRID =
-  'grid grid-cols-[1fr_40px] sm:grid-cols-[1fr_100px_140px_40px] gap-4 px-4 py-2.5 border-b last:border-b-0';
+  "grid grid-cols-[1fr_40px] sm:grid-cols-[1fr_100px_140px_40px] gap-4 px-4 py-2.5 border-b last:border-b-0";
 
 export function FileExplorer({ folderId }: { folderId: string | null }) {
   const router = useRouter();
   const workspace = useWorkspace();
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState("");
   const [showUpload, setShowUpload] = useState(false);
   const [showCreateFolder, setShowCreateFolder] = useState(false);
-  const [droppedFiles, setDroppedFiles] = useState<File[] | undefined>(undefined);
+  const [droppedFiles, setDroppedFiles] = useState<File[] | undefined>(
+    undefined,
+  );
   const [renameTarget, setRenameTarget] = useState<{
     id: string;
     name: string;
-    type: 'file' | 'folder';
+    type: "file" | "folder";
   } | null>(null);
   const [shareTarget, setShareTarget] = useState<{
     id: string;
     name: string;
-    type: 'file' | 'folder';
+    type: "file" | "folder";
   } | null>(null);
   const [trackTarget, setTrackTarget] = useState<{
     id: string;
     name: string;
-    type: 'file' | 'folder';
+    type: "file" | "folder";
   } | null>(null);
 
   const utils = trpc.useUtils();
@@ -84,22 +86,22 @@ export function FileExplorer({ folderId }: { folderId: string | null }) {
     search: search || undefined,
     page: 1,
     pageSize: 100,
-    field: 'name',
-    direction: 'asc',
+    field: "name",
+    direction: "asc",
   });
 
   const deleteFile = trpc.files.delete.useMutation({
     onSuccess: () => {
       utils.files.list.invalidate();
       utils.storage.usage.invalidate();
-      toast.success('File deleted');
+      toast.success("File deleted");
     },
   });
 
   const deleteFolder = trpc.folders.delete.useMutation({
     onSuccess: () => {
       utils.folders.list.invalidate();
-      toast.success('Folder deleted');
+      toast.success("Folder deleted");
     },
   });
 
@@ -107,16 +109,16 @@ export function FileExplorer({ folderId }: { folderId: string | null }) {
   const runPluginAction = trpc.plugins.runAction.useMutation();
 
   const { data: filePluginActions = [] } = trpc.plugins.fileActions.useQuery({
-    target: 'file',
+    target: "file",
   });
   const { data: folderPluginActions = [] } = trpc.plugins.fileActions.useQuery({
-    target: 'folder',
+    target: "folder",
   });
 
   const handleDownload = useCallback(
     async (fileId: string) => {
       const result = await getDownloadUrl.mutateAsync({ id: fileId });
-      const a = document.createElement('a');
+      const a = document.createElement("a");
       a.href = result.url;
       a.download = result.filename;
       a.click();
@@ -136,7 +138,7 @@ export function FileExplorer({ folderId }: { folderId: string | null }) {
         actionId: string;
         label: string;
       },
-      target: 'file' | 'folder',
+      target: "file" | "folder",
       targetId: string,
     ) => {
       try {
@@ -149,7 +151,7 @@ export function FileExplorer({ folderId }: { folderId: string | null }) {
 
         toast.success(result.message);
         if (result.downloadUrl) {
-          window.open(result.downloadUrl, '_blank', 'noopener,noreferrer');
+          window.open(result.downloadUrl, "_blank", "noopener,noreferrer");
         }
       } catch (err) {
         toast.error((err as Error).message);
@@ -159,7 +161,7 @@ export function FileExplorer({ folderId }: { folderId: string | null }) {
   );
 
   const onDrop = useCallback(
-    (item: { id: string; type: 'file' | 'folder' }, targetFolderId: string) => {
+    (item: { id: string; type: "file" | "folder" }, targetFolderId: string) => {
       handleDrop(item, targetFolderId);
     },
     [handleDrop],
@@ -307,7 +309,7 @@ export function FileExplorer({ folderId }: { folderId: string | null }) {
                           setRenameTarget({
                             id: folder.id,
                             name: folder.name,
-                            type: 'folder',
+                            type: "folder",
                           })
                         }
                       >
@@ -319,7 +321,7 @@ export function FileExplorer({ folderId }: { folderId: string | null }) {
                           setShareTarget({
                             id: folder.id,
                             name: folder.name,
-                            type: 'folder',
+                            type: "folder",
                           })
                         }
                       >
@@ -331,7 +333,7 @@ export function FileExplorer({ folderId }: { folderId: string | null }) {
                           setTrackTarget({
                             id: folder.id,
                             name: folder.name,
-                            type: 'folder',
+                            type: "folder",
                           })
                         }
                       >
@@ -345,7 +347,7 @@ export function FileExplorer({ folderId }: { folderId: string | null }) {
                             <DropdownMenuItem
                               key={`${action.workspacePluginId}:${action.actionId}`}
                               onSelect={() =>
-                                handlePluginAction(action, 'folder', folder.id)
+                                handlePluginAction(action, "folder", folder.id)
                               }
                             >
                               <Sparkles />
@@ -357,9 +359,7 @@ export function FileExplorer({ folderId }: { folderId: string | null }) {
                       <DropdownMenuSeparator />
                       <DropdownMenuItem
                         variant="destructive"
-                        onSelect={() =>
-                          deleteFolder.mutate({ id: folder.id })
-                        }
+                        onSelect={() => deleteFolder.mutate({ id: folder.id })}
                       >
                         <Trash2 />
                         Delete
@@ -386,12 +386,16 @@ export function FileExplorer({ folderId }: { folderId: string | null }) {
                   />
                   <span className="text-sm truncate">{file.name}</span>
                 </div>
-                <span className="hidden sm:block text-xs font-mono text-muted-foreground tabular-nums">
-                  {formatBytes(file.size)}
-                </span>
-                <span className="hidden sm:block text-xs font-mono text-muted-foreground">
-                  {formatDate(file.updatedAt)}
-                </span>
+                <div className="hidden sm:block">
+                  <span className="text-xs font-mono text-muted-foreground tabular-nums">
+                    {formatBytes(file.size)}
+                  </span>
+                </div>
+                <div className="hidden sm:block">
+                  <span className="text-xs font-mono text-muted-foreground">
+                    {formatDate(file.updatedAt)}
+                  </span>
+                </div>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button
@@ -403,9 +407,7 @@ export function FileExplorer({ folderId }: { folderId: string | null }) {
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
-                    <DropdownMenuItem
-                      onSelect={() => handleDownload(file.id)}
-                    >
+                    <DropdownMenuItem onSelect={() => handleDownload(file.id)}>
                       <Download />
                       Download
                     </DropdownMenuItem>
@@ -414,7 +416,7 @@ export function FileExplorer({ folderId }: { folderId: string | null }) {
                         setRenameTarget({
                           id: file.id,
                           name: file.name,
-                          type: 'file',
+                          type: "file",
                         })
                       }
                     >
@@ -426,7 +428,7 @@ export function FileExplorer({ folderId }: { folderId: string | null }) {
                         setShareTarget({
                           id: file.id,
                           name: file.name,
-                          type: 'file',
+                          type: "file",
                         })
                       }
                     >
@@ -438,7 +440,7 @@ export function FileExplorer({ folderId }: { folderId: string | null }) {
                         setTrackTarget({
                           id: file.id,
                           name: file.name,
-                          type: 'file',
+                          type: "file",
                         })
                       }
                     >
@@ -452,7 +454,7 @@ export function FileExplorer({ folderId }: { folderId: string | null }) {
                           <DropdownMenuItem
                             key={`${action.workspacePluginId}:${action.actionId}`}
                             onSelect={() =>
-                              handlePluginAction(action, 'file', file.id)
+                              handlePluginAction(action, "file", file.id)
                             }
                           >
                             <Sparkles />

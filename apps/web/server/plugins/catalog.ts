@@ -5,11 +5,11 @@ const builtinPluginManifestsRaw: PluginManifest[] = [
     slug: 'qmd-search',
     name: 'QMD Search',
     description:
-      'Enhances native file discovery with query-aware re-ranking for document-heavy workspaces.',
-    version: '0.1.0',
-    developer: 'OpenStore Community',
+      'Full-text and semantic document search powered by QMD. Automatically indexes uploaded documents for intelligent discovery.',
+    version: '0.2.0',
+    developer: 'OpenStore',
     homepageUrl: 'https://github.com/tobi/qmd',
-    source: 'community',
+    source: 'official',
     permissions: ['files.read', 'search.read', 'search.enhance'],
     capabilities: ['workspace_search', 'file_actions'],
     actions: [
@@ -22,25 +22,7 @@ const builtinPluginManifestsRaw: PluginManifest[] = [
         requiresPermissions: ['files.read', 'search.enhance'],
       },
     ],
-    configFields: [
-      {
-        key: 'endpointUrl',
-        label: 'QMD Endpoint URL',
-        description:
-          'Optional. URL of your hosted QMD service. If omitted, OpenStore uses built-in ranking.',
-        type: 'url',
-        required: false,
-        placeholder: 'https://qmd.your-company.com',
-      },
-      {
-        key: 'apiKey',
-        label: 'QMD API Key',
-        description:
-          'Optional. Used only when your QMD deployment requires authenticated requests.',
-        type: 'secret',
-        required: false,
-      },
-    ],
+    configFields: [],
   },
   {
     slug: 'google-drive-sync',
