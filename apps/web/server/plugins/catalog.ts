@@ -49,7 +49,7 @@ const builtinPluginManifestsRaw: PluginManifest[] = [
       'Transfer files between OpenStore and Google Drive directly from file and folder workflows.',
     version: '0.1.0',
     developer: 'OpenStore',
-    homepageUrl: 'https://dub.co/integrations',
+    homepageUrl: 'https://developers.google.com/drive',
     source: 'official',
     permissions: [
       'files.read',
@@ -57,7 +57,7 @@ const builtinPluginManifestsRaw: PluginManifest[] = [
       'folders.read',
       'folders.write',
       'external.network',
-      'external.google-drive',
+      'external.storage-service',
     ],
     capabilities: ['file_actions', 'folder_actions', 'import_export'],
     actions: [
@@ -67,7 +67,7 @@ const builtinPluginManifestsRaw: PluginManifest[] = [
         description:
           'Send this file to your connected Google Drive destination.',
         target: 'file',
-        requiresPermissions: ['files.read', 'external.google-drive'],
+        requiresPermissions: ['files.read', 'external.storage-service'],
       },
       {
         id: 'google-drive.import-into-folder',
@@ -75,7 +75,7 @@ const builtinPluginManifestsRaw: PluginManifest[] = [
         description:
           'Import files from Google Drive directly into this folder.',
         target: 'folder',
-        requiresPermissions: ['files.write', 'external.google-drive'],
+        requiresPermissions: ['files.write', 'external.storage-service'],
       },
     ],
     configFields: [

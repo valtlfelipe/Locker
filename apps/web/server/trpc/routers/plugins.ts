@@ -1,7 +1,6 @@
 import { z } from 'zod';
 import { TRPCError } from '@trpc/server';
 import { and, desc, eq, inArray } from 'drizzle-orm';
-import { createStorage } from '@openstore/storage';
 import {
   files,
   folders,
@@ -25,6 +24,9 @@ import {
 import { createRouter, workspaceProcedure, workspaceAdminProcedure } from '../init';
 import { getBuiltinPluginBySlug, getBuiltinPluginCatalog } from '../../plugins/catalog';
 import { encryptPluginSecret } from '../../plugins/secrets';
+import { dispatchAction, getHandler } from '../../plugins/runtime';
+// Ensure built-in handlers are registered
+import '../../plugins/handlers';
 
 type PluginConfigValue = string | number | boolean | null;
 type PluginConfig = Record<string, PluginConfigValue>;
@@ -74,12 +76,12 @@ function normalizeGrantedPermissions(value: unknown): PluginPermission[] {
   return Array.from(new Set(filtered));
 }
 
-function isPermissionSubset(
-  grantedPermissions: PluginPermission[],
-  requestedPermissions: PluginPermission[],
+function isSubsetOf(
+  subset: PluginPermission[],
+  superset: PluginPermission[],
 ): boolean {
-  const requestedSet = new Set(requestedPermissions);
-  return grantedPermissions.every((permission) => requestedSet.has(permission));
+  const superSet = new Set(superset);
+  return subset.every((permission) => superSet.has(permission));
 }
 
 function hasRequiredPermissions(
@@ -388,10 +390,10 @@ export const pluginsRouter = createRouter({
       const requestedPermissions = normalizeGrantedPermissions(
         input.grantedPermissions ?? manifest.permissions,
       );
-      if (!isPermissionSubset(requestedPermissions, manifest.permissions)) {
+      if (!isSubsetOf(requestedPermissions, manifest.permissions)) {
         throw new TRPCError({
           code: 'BAD_REQUEST',
-          message: 'Granted permissions must be a subset of requested permissions',
+          message: "Granted permissions must be a subset of the plugin's declared permissions",
         });
       }
 
@@ -639,6 +641,11 @@ export const pluginsRouter = createRouter({
       for (const row of installedRows) {
         const manifest = parseManifestSafe(row.manifest);
         if (!manifest) continue;
+
+        // Only show actions for plugins with a registered handler
+        const handler = getHandler(manifest.slug);
+        if (!handler?.executeAction) continue;
+
         const grantedPermissions = normalizeGrantedPermissions(
           row.grantedPermissions,
         );
@@ -763,66 +770,20 @@ export const pluginsRouter = createRouter({
         targetId: input.targetId,
       });
 
-      let response: {
-        status: 'success' | 'queued';
-        message: string;
-        downloadUrl?: string;
-        filename?: string;
-      } = {
-        status: 'success',
-        message: `${action.label} completed`,
-      };
-
-      if (
-        manifest.slug === 'qmd-search' &&
-        action.id === 'qmd.reindex-file' &&
-        input.target === 'file'
-      ) {
-        response = {
-          status: 'queued',
-          message: `Queued "${target.targetName}" for discovery re-indexing`,
-        };
-      } else if (
-        manifest.slug === 'google-drive-sync' &&
-        action.id === 'google-drive.export-file' &&
-        input.target === 'file'
-      ) {
-        const [file] = await ctx.db
-          .select({
-            name: files.name,
-            storagePath: files.storagePath,
-          })
-          .from(files)
-          .where(
-            and(
-              eq(files.id, input.targetId),
-              eq(files.workspaceId, ctx.workspaceId),
-            ),
-          )
-          .limit(1);
-
-        if (!file) {
-          throw new TRPCError({ code: 'NOT_FOUND', message: 'File not found' });
-        }
-
-        const storage = createStorage();
-        const downloadUrl = await storage.getSignedUrl(file.storagePath, 900);
-        response = {
-          status: 'queued',
-          message: `Prepared "${file.name}" for Google Drive transfer`,
-          downloadUrl,
-          filename: file.name,
-        };
-      } else if (
-        manifest.slug === 'google-drive-sync' &&
-        action.id === 'google-drive.import-into-folder' &&
-        input.target === 'folder'
-      ) {
-        response = {
-          status: 'queued',
-          message: `Queued Google Drive import into "${target.targetName}"`,
-        };
-      }
+      const response = await dispatchAction({
+        db: ctx.db,
+        workspaceId: ctx.workspaceId,
+        userId: ctx.userId,
+        pluginSlug: manifest.slug,
+        pluginId: plugin.id,
+        config: normalizeConfig(plugin.config),
+        actionId: input.actionId,
+        target: {
+          type: input.target,
+          id: input.targetId,
+          name: target.targetName,
+        },
+      });
 
       await ctx.db.insert(pluginInvocationLogs).values({
         workspacePluginId: plugin.id,

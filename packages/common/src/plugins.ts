@@ -18,7 +18,7 @@ export const PLUGIN_PERMISSIONS = [
   'workspace.read',
   'workspace.members.read',
   'external.network',
-  'external.google-drive',
+  'external.storage-service',
 ] as const;
 export type PluginPermission = (typeof PLUGIN_PERMISSIONS)[number];
 
@@ -70,9 +70,9 @@ export const PLUGIN_PERMISSION_LABELS: Record<
     label: 'Outbound Network',
     description: 'Call external APIs and services on behalf of this workspace.',
   },
-  'external.google-drive': {
-    label: 'Google Drive Access',
-    description: 'Transfer data to and from Google Drive for this workspace.',
+  'external.storage-service': {
+    label: 'External Storage Service',
+    description: 'Transfer files to and from external storage services (Google Drive, Dropbox, etc.).',
   },
 };
 
