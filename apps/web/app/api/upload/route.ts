@@ -159,11 +159,25 @@ export async function POST(req: NextRequest) {
 
   const buffer = Buffer.from(await file.arrayBuffer());
 
-  await storage.upload({
-    path: storagePath,
-    data: buffer,
-    contentType: file.type || "application/octet-stream",
-  });
+  try {
+    await storage.upload({
+      path: storagePath,
+      data: buffer,
+      contentType: file.type || "application/octet-stream",
+    });
+  } catch (err) {
+    // Clean up the file record if this was a fresh upload
+    if (!existingFileId) {
+      await db
+        .delete(files)
+        .where(eq(files.id, fileId))
+        .catch(() => {});
+    }
+    return NextResponse.json(
+      { error: `Storage upload failed: ${(err as Error).message}` },
+      { status: 502 },
+    );
+  }
 
   let newFile;
   if (existingFileId) {
