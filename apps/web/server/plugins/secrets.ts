@@ -30,7 +30,7 @@ function getPluginEncryptionKey(): Buffer {
 
 export function encryptPluginSecret(value: string): string {
   const key = getPluginEncryptionKey();
-  const iv = randomBytes(16);
+  const iv = randomBytes(12);
   const cipher = createCipheriv(ENCRYPTION_ALGORITHM, key, iv);
   const encrypted = Buffer.concat([
     cipher.update(value, 'utf8'),

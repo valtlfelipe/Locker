@@ -152,7 +152,7 @@ export async function dispatchSearch<
     const ctx = await buildPluginContext({
       db: params.db,
       workspaceId: params.workspaceId,
-      userId: '', // search doesn't need actor identity
+      userId: 'system:search', // search dispatched without a specific actor
       pluginId: plugin.id,
       config,
     });

@@ -32,6 +32,10 @@ interface VfsShellSession {
   lastUsedAt: number;
 }
 
+// NOTE: Sessions are stored in-process memory and are not shared across
+// replicas. Multi-instance deployments should use sticky sessions (e.g.
+// cookie or header affinity) to route a user's VFS requests to the same
+// instance, or migrate to a shared store (e.g. Redis) if that is not feasible.
 const sessionsById = new Map<string, VfsShellSession>();
 
 const PRUNE_THROTTLE_MS = 30_000;

@@ -1,4 +1,5 @@
 import path from "node:path";
+import RE2 from "re2";
 import { defineCommand } from "just-bash";
 import type { CommandContext, ExecResult } from "just-bash";
 
@@ -279,12 +280,14 @@ function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+const MAX_PATTERN_LENGTH = 1000;
+
 function buildMatcher(
   patterns: string[],
   flags: GrepFlags,
-): (line: string) => RegExpMatchArray | null {
+): { matcher: (line: string) => RegExpMatchArray | null; error?: string } {
   if (patterns.length === 0) {
-    return () => null;
+    return { matcher: () => null };
   }
 
   const regexSources = patterns.map((p) => {
@@ -297,13 +300,27 @@ function buildMatcher(
 
   const combined =
     regexSources.length === 1 ? regexSources[0]! : regexSources.join("|");
+
+  if (combined.length > MAX_PATTERN_LENGTH) {
+    return {
+      matcher: () => null,
+      error: `grep: pattern too long (max ${MAX_PATTERN_LENGTH} characters)\n`,
+    };
+  }
+
   const regexFlags = flags.ignoreCase ? "i" : "";
 
   try {
-    const regex = new RegExp(combined, regexFlags);
-    return (line: string) => regex.exec(line);
+    // Use RE2 for linear-time matching to prevent ReDoS attacks
+    const regex = new RE2(combined, regexFlags);
+    return {
+      matcher: (line: string) => regex.exec(line) as RegExpMatchArray | null,
+    };
   } catch {
-    return () => null;
+    return {
+      matcher: () => null,
+      error: `grep: invalid regex pattern: ${combined}\n`,
+    };
   }
 }
 
@@ -531,7 +548,11 @@ export const optimizedGrepCommand = defineCommand(
       };
     }
 
-    const matcher = buildMatcher(patterns, flags);
+    const { matcher, error: matcherError } = buildMatcher(patterns, flags);
+
+    if (matcherError) {
+      return { stdout: "", stderr: matcherError, exitCode: 2 };
+    }
 
     // If no targets, read from stdin
     if (targets.length === 0) {

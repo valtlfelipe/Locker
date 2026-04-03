@@ -39,7 +39,7 @@ export async function streamToString(stream: ReadableStream): Promise<string> {
     if (done) break;
     totalBytes += value.byteLength;
     if (totalBytes > MAX_CONTENT_SIZE) {
-      reader.cancel();
+      await reader.cancel();
       throw new Error(`File exceeds ${MAX_CONTENT_SIZE} byte limit for indexing`);
     }
     chunks.push(decoder.decode(value, { stream: true }));

@@ -774,20 +774,38 @@ export const pluginsRouter = createRouter({
         targetId: input.targetId,
       });
 
-      const response = await dispatchAction({
-        db: ctx.db,
-        workspaceId: ctx.workspaceId,
-        userId: ctx.userId,
-        pluginSlug: manifest.slug,
-        pluginId: plugin.id,
-        config: normalizeConfig(plugin.config),
-        actionId: input.actionId,
-        target: {
-          type: input.target,
-          id: input.targetId,
-          name: target.targetName,
-        },
-      });
+      let response: Awaited<ReturnType<typeof dispatchAction>>;
+      try {
+        response = await dispatchAction({
+          db: ctx.db,
+          workspaceId: ctx.workspaceId,
+          userId: ctx.userId,
+          pluginSlug: manifest.slug,
+          pluginId: plugin.id,
+          config: normalizeConfig(plugin.config),
+          actionId: input.actionId,
+          target: {
+            type: input.target,
+            id: input.targetId,
+            name: target.targetName,
+          },
+        });
+      } catch (error) {
+        await ctx.db.insert(pluginInvocationLogs).values({
+          workspacePluginId: plugin.id,
+          actorUserId: ctx.userId,
+          actionId: action.id,
+          targetType: input.target,
+          targetId: input.targetId,
+          status: 'error',
+          details: {
+            pluginSlug: manifest.slug,
+            actionLabel: action.label,
+            message: error instanceof Error ? error.message : String(error),
+          },
+        });
+        throw error;
+      }
 
       await ctx.db.insert(pluginInvocationLogs).values({
         workspacePluginId: plugin.id,
