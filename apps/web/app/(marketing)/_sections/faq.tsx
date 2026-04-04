@@ -7,6 +7,7 @@ import { motion } from "motion/react";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
 import { GITHUB_URL } from "@/constants/app";
+import { MotionDiv } from "../_components/fade-in";
 
 const faqItems = [
   {
@@ -88,7 +89,7 @@ export function Faq() {
   return (
     <section id="faq" className="flex flex-col bg-mkt-dark">
       <div className="grid-layout w-full py-20">
-        <motion.div
+        <MotionDiv
           className="col-span-full"
           initial={{ opacity: 0, y: 20 }}
           whileInView={{ opacity: 1, y: 0 }}
@@ -96,7 +97,7 @@ export function Faq() {
           transition={{ duration: 0.5 }}
         >
           <h2 className="mkt-heading text-white">Frequently Asked Questions</h2>
-        </motion.div>
+        </MotionDiv>
 
         <div className="col-span-full mt-4">
           {faqItems.map((item) => (
@@ -110,7 +111,7 @@ export function Faq() {
         </div>
 
         {/* Final CTA */}
-        <motion.div
+        <MotionDiv
           className="col-span-full mt-14 flex flex-col items-center gap-5 text-center"
           initial={{ opacity: 0, y: 20 }}
           whileInView={{ opacity: 1, y: 0 }}
@@ -139,7 +140,7 @@ export function Faq() {
               </Button>
             </Link>
           </div>
-        </motion.div>
+        </MotionDiv>
       </div>
     </section>
   );

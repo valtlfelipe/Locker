@@ -5,7 +5,7 @@ import { motion } from "motion/react";
 import { cn } from "@/lib/utils";
 import { HardDriveIcon } from "lucide-react";
 import { FolderSvg } from "../_components/folder-svg";
-
+import { MotionDiv } from "../_components/fade-in";
 const providers = [
   {
     name: "Local Filesystem",
@@ -44,7 +44,7 @@ export function Storage() {
   return (
     <section id="storage" className="flex flex-col bg-muted">
       <div className="grid-layout w-full py-20">
-        <motion.div
+        <MotionDiv
           className="col-span-full mb-10"
           initial={{ opacity: 0, y: 20 }}
           whileInView={{ opacity: 1, y: 0 }}
@@ -67,10 +67,10 @@ export function Storage() {
             and you&apos;re done. Switch providers anytime without touching a
             line of code.
           </p>
-        </motion.div>
+        </MotionDiv>
 
         {providers.map((provider, index) => (
-          <motion.div
+          <MotionDiv
             key={provider.name}
             className="col-span-full md:col-span-6 lg:col-span-3"
             initial={{ opacity: 0, y: 20 }}
@@ -104,7 +104,7 @@ export function Storage() {
                 {provider.description}
               </p>
             </div>
-          </motion.div>
+          </MotionDiv>
         ))}
       </div>
 

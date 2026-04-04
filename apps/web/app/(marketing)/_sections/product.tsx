@@ -2,12 +2,12 @@
 
 import { motion } from "motion/react";
 import { FolderSvg } from "../_components/folder-svg";
-
+import { MotionDiv } from "../_components/fade-in";
 export function Product() {
   return (
     <section className="flex flex-col bg-mkt-dark">
       <div className="grid-layout w-full py-20">
-        <motion.div
+        <MotionDiv
           className="col-span-full text-center"
           initial={{ opacity: 0, y: 20 }}
           whileInView={{ opacity: 1, y: 0 }}
@@ -23,10 +23,10 @@ export function Product() {
             files. Deploy on your own servers and keep everything under your
             roof.
           </p>
-        </motion.div>
+        </MotionDiv>
 
         {/* Highlight quote card */}
-        <motion.div
+        <MotionDiv
           className="col-span-full mt-10"
           initial={{ opacity: 0, y: 24 }}
           whileInView={{ opacity: 1, y: 0 }}
@@ -47,7 +47,7 @@ export function Product() {
               </div>
             </div>
           </div>
-        </motion.div>
+        </MotionDiv>
 
         {/* Stats row */}
         <div className="col-span-full mt-10 grid grid-cols-2 gap-4 md:grid-cols-4">
@@ -57,7 +57,7 @@ export function Product() {
             { value: "Type-safe", label: "End-to-end with tRPC" },
             { value: "0", label: "Vendor lock-in" },
           ].map((stat, i) => (
-            <motion.div
+            <MotionDiv
               key={stat.label}
               className="rounded-xl border border-white/[0.08] bg-white/[0.03] p-5 text-center"
               initial={{ opacity: 0, y: 16 }}
@@ -67,7 +67,7 @@ export function Product() {
             >
               <div className="mkt-heading text-primary">{stat.value}</div>
               <div className="mkt-body-sm mt-1 text-white/50">{stat.label}</div>
-            </motion.div>
+            </MotionDiv>
           ))}
         </div>
       </div>
