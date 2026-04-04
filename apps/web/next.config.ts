@@ -7,7 +7,7 @@ const nextConfig: NextConfig = {
     "@locker/email",
     "@locker/storage",
   ],
-  serverExternalPackages: ["re2"],
+  serverExternalPackages: ["re2", "just-bash"],
 };
 
 export default nextConfig;
