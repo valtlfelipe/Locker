@@ -216,13 +216,14 @@ export const filesRouter = createRouter({
         } catch {}
       }
 
+      const escapedQuery = query.replace(/[%_\\]/g, "\\$&");
       const nameMatches = await db
         .select()
         .from(files)
         .where(
           and(
             eq(files.workspaceId, ctx.workspaceId),
-            ilike(files.name, `%${query}%`),
+            ilike(files.name, `%${escapedQuery}%`),
           ),
         )
         .limit(20);

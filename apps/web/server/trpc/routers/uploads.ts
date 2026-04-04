@@ -9,6 +9,7 @@ import {
   shouldEnforceQuota,
 } from "../../../server/storage";
 import { qmdClient, streamToString } from "../../plugins/handlers/qmd-client";
+import { ftsClient } from "../../plugins/handlers/fts-client";
 import { resolvePluginEndpoint } from "../../plugins/resolve-endpoint";
 import { invalidateWorkspaceVfsSnapshot } from "../../vfs/locker-vfs";
 import {
@@ -206,6 +207,37 @@ export const uploadsRouter = createRouter({
             const { data } = await storage.download(file.storagePath);
             const content = await streamToString(data);
             await qmdClient.indexFile(
+              {
+                workspaceId,
+                fileId: input.fileId,
+                fileName: file.name,
+                mimeType: file.mimeType,
+                content,
+              },
+              endpoint,
+            );
+          } catch {}
+        })();
+      }
+
+      // Fire-and-forget: index file for FTS search
+      if (ftsClient.shouldIndex(file.mimeType)) {
+        void (async () => {
+          try {
+            const endpoint = await resolvePluginEndpoint(
+              db,
+              workspaceId,
+              "fts-search",
+              {
+                serviceUrl: process.env.FTS_SERVICE_URL,
+                apiSecret: process.env.FTS_API_SECRET,
+              },
+            );
+            if (!endpoint) return;
+            const storage = await createStorageForFile(file.storageConfigId);
+            const { data } = await storage.download(file.storagePath);
+            const content = await streamToString(data);
+            await ftsClient.indexFile(
               {
                 workspaceId,
                 fileId: input.fileId,

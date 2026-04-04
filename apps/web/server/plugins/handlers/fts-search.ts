@@ -15,10 +15,18 @@ import type {
 
 const manifest = getBuiltinPluginBySlug("fts-search")!;
 
-function endpointFromCtx(ctx: PluginContext): EndpointConfig {
+function endpointFromCtx(ctx: PluginContext): EndpointConfig | undefined {
+  const customUrl = (ctx.config.serviceUrl as string) || undefined;
+  const customSecret = ctx.secrets.apiSecret || undefined;
+
+  // No workspace-level overrides — let the client use its own env-var defaults
+  if (!customUrl && !customSecret) return undefined;
+
   return {
-    serviceUrl: (ctx.config.serviceUrl as string) || undefined,
-    apiSecret: ctx.secrets.apiSecret || undefined,
+    serviceUrl: customUrl ?? process.env.FTS_SERVICE_URL,
+    // Guard: only fall back to the env secret when the URL is also from env
+    apiSecret:
+      customSecret ?? (customUrl ? undefined : process.env.FTS_API_SECRET),
   };
 }
 

@@ -12,10 +12,18 @@ import type {
 
 const manifest = getBuiltinPluginBySlug("qmd-search")!;
 
-function endpointFromCtx(ctx: PluginContext): EndpointConfig {
+function endpointFromCtx(ctx: PluginContext): EndpointConfig | undefined {
+  const customUrl = (ctx.config.serviceUrl as string) || undefined;
+  const customSecret = ctx.secrets.apiSecret || undefined;
+
+  // No workspace-level overrides — let the client use its own env-var defaults
+  if (!customUrl && !customSecret) return undefined;
+
   return {
-    serviceUrl: (ctx.config.serviceUrl as string) || undefined,
-    apiSecret: ctx.secrets.apiSecret || undefined,
+    serviceUrl: customUrl ?? process.env.QMD_SERVICE_URL,
+    // Guard: only fall back to the env secret when the URL is also from env
+    apiSecret:
+      customSecret ?? (customUrl ? undefined : process.env.QMD_API_SECRET),
   };
 }
 
@@ -29,7 +37,7 @@ export const qmdSearchHandler: PluginHandler = {
   ): Promise<ActionResult> {
     if (actionId === "qmd.reindex-file" && target.type === "file") {
       const endpoint = endpointFromCtx(ctx);
-      if (!endpoint.serviceUrl && !qmdClient.isConfigured()) {
+      if (!endpoint?.serviceUrl && !qmdClient.isConfigured()) {
         return {
           status: "success",
           message: "QMD service is not configured",
@@ -94,7 +102,7 @@ export const qmdSearchHandler: PluginHandler = {
     const endpoint = endpointFromCtx(ctx);
 
     // Use the QMD service if configured
-    if (endpoint.serviceUrl || qmdClient.isConfigured()) {
+    if (endpoint?.serviceUrl || qmdClient.isConfigured()) {
       try {
         return await qmdClient.search(
           {
