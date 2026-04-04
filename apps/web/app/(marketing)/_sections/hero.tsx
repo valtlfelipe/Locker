@@ -398,7 +398,7 @@ export function Hero() {
       />
 
       {/* Two-column hero */}
-      <div className="relative mx-auto my-10 grid w-full max-w-[1280px] grid-cols-1 gap-x-4 px-4 lg:my-16 lg:grid-cols-2 lg:gap-x-6 lg:px-9 lg:min-h-[550px] lg:max-h-[725px]">
+      <div className="relative mx-auto my-10 grid w-full max-w-[1280px] grid-cols-1 gap-x-4 px-4 lg:my-16 lg:grid-cols-[minmax(543px,1fr)_1fr] lg:gap-x-6 lg:px-9 lg:min-h-[550px] lg:max-h-[725px]">
         {/* Left — text content */}
         <div className="z-10 col-span-full flex flex-col justify-center lg:col-span-1">
           <div className="flex flex-col gap-y-5 lg:gap-y-7">
