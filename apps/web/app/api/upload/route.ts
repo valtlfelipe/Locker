@@ -147,7 +147,7 @@ export async function POST(req: NextRequest) {
 
   // Resolve storage: for resumed uploads use the config recorded at initiate
   // time; for fresh uploads use the current workspace config.
-  let storage;
+  let storage: Awaited<ReturnType<typeof createStorageForFile>>;
   let newConfigId: string | null = null;
   let newProviderName: string | undefined;
 
