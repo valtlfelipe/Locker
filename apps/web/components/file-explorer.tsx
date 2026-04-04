@@ -48,7 +48,7 @@ export function FileExplorer({ folderId }: { folderId: string | null }) {
   const workspace = useWorkspace();
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   useEffect(() => {
     clearTimeout(debounceRef.current);
