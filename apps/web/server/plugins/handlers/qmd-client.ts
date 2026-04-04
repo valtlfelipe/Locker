@@ -1,18 +1,18 @@
-import { and, eq } from 'drizzle-orm';
-import { workspacePlugins } from '@locker/database';
-import type { Database } from '@locker/database';
+import { and, eq } from "drizzle-orm";
+import { workspacePlugins } from "@locker/database";
+import type { Database } from "@locker/database";
 
 const QMD_SERVICE_URL = process.env.QMD_SERVICE_URL;
 const QMD_API_SECRET = process.env.QMD_API_SECRET;
 
 const MAX_CONTENT_SIZE = 10 * 1024 * 1024; // 10MB — skip files larger than this
 
-const INDEXABLE_PREFIXES = ['text/'];
+const INDEXABLE_PREFIXES = ["text/"];
 const INDEXABLE_TYPES = new Set([
-  'application/json',
-  'application/xml',
-  'application/javascript',
-  'application/typescript',
+  "application/json",
+  "application/xml",
+  "application/javascript",
+  "application/typescript",
 ]);
 
 function shouldIndex(mimeType: string): boolean {
@@ -21,9 +21,11 @@ function shouldIndex(mimeType: string): boolean {
 }
 
 function authHeaders(): Record<string, string> {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
   if (QMD_API_SECRET) {
-    headers['Authorization'] = `Bearer ${QMD_API_SECRET}`;
+    headers["Authorization"] = `Bearer ${QMD_API_SECRET}`;
   }
   return headers;
 }
@@ -40,13 +42,15 @@ export async function streamToString(stream: ReadableStream): Promise<string> {
     totalBytes += value.byteLength;
     if (totalBytes > MAX_CONTENT_SIZE) {
       await reader.cancel();
-      throw new Error(`File exceeds ${MAX_CONTENT_SIZE} byte limit for indexing`);
+      throw new Error(
+        `File exceeds ${MAX_CONTENT_SIZE} byte limit for indexing`,
+      );
     }
     chunks.push(decoder.decode(value, { stream: true }));
   }
 
   chunks.push(decoder.decode());
-  return chunks.join('');
+  return chunks.join("");
 }
 
 export const qmdClient = {
@@ -56,15 +60,18 @@ export const qmdClient = {
 
   shouldIndex,
 
-  async isActiveForWorkspace(db: Database, workspaceId: string): Promise<boolean> {
+  async isActiveForWorkspace(
+    db: Database,
+    workspaceId: string,
+  ): Promise<boolean> {
     const [row] = await db
       .select({ id: workspacePlugins.id })
       .from(workspacePlugins)
       .where(
         and(
           eq(workspacePlugins.workspaceId, workspaceId),
-          eq(workspacePlugins.pluginSlug, 'qmd-search'),
-          eq(workspacePlugins.status, 'active'),
+          eq(workspacePlugins.pluginSlug, "qmd-search"),
+          eq(workspacePlugins.status, "active"),
         ),
       )
       .limit(1);
@@ -81,13 +88,15 @@ export const qmdClient = {
     if (!QMD_SERVICE_URL) return;
 
     const res = await fetch(`${QMD_SERVICE_URL}/index`, {
-      method: 'POST',
+      method: "POST",
       headers: authHeaders(),
       body: JSON.stringify(params),
       signal: AbortSignal.timeout(30_000),
     });
     if (!res.ok) {
-      console.error(`[qmd-client] indexFile failed: ${res.status} ${res.statusText}`);
+      console.error(
+        `[qmd-client] indexFile failed: ${res.status} ${res.statusText}`,
+      );
     }
   },
 
@@ -99,14 +108,16 @@ export const qmdClient = {
     if (!QMD_SERVICE_URL) return [];
 
     const res = await fetch(`${QMD_SERVICE_URL}/search`, {
-      method: 'POST',
+      method: "POST",
       headers: authHeaders(),
       body: JSON.stringify(params),
-      signal: AbortSignal.timeout(5_000),
+      signal: AbortSignal.timeout(15_000),
     });
 
     if (!res.ok) return [];
-    const data = (await res.json()) as { results?: Array<{ fileId: string; score: number; snippet?: string }> };
+    const data = (await res.json()) as {
+      results?: Array<{ fileId: string; score: number; snippet?: string }>;
+    };
     return data.results ?? [];
   },
 
@@ -117,7 +128,7 @@ export const qmdClient = {
     if (!QMD_SERVICE_URL) return;
 
     await fetch(`${QMD_SERVICE_URL}/deindex`, {
-      method: 'POST',
+      method: "POST",
       headers: authHeaders(),
       body: JSON.stringify(params),
       signal: AbortSignal.timeout(5_000),
