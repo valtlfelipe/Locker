@@ -22,6 +22,7 @@ import {
 import { enhanceSearchResultsWithPlugins } from "../../plugins/search";
 import { qmdClient } from "../../plugins/handlers/qmd-client";
 import { ftsClient } from "../../plugins/handlers/fts-client";
+import { resolvePluginEndpoint } from "../../plugins/resolve-endpoint";
 import { invalidateWorkspaceVfsSnapshot } from "../../vfs/locker-vfs";
 
 export const filesRouter = createRouter({
@@ -45,28 +46,50 @@ export const filesRouter = createRouter({
         const contentFileIds = new Set<string>();
 
         // QMD semantic search
-        if (qmdClient.isConfigured()) {
+        const qmdEndpoint = await resolvePluginEndpoint(
+          db,
+          ctx.workspaceId,
+          "qmd-search",
+          {
+            serviceUrl: process.env.QMD_SERVICE_URL,
+            apiSecret: process.env.QMD_API_SECRET,
+          },
+        );
+        if (qmdEndpoint) {
           try {
-            const qmdResults = await qmdClient.search({
-              workspaceId: ctx.workspaceId,
-              query: search,
-              limit: pageSize,
-            });
+            const qmdResults = await qmdClient.search(
+              {
+                workspaceId: ctx.workspaceId,
+                query: search,
+                limit: pageSize,
+              },
+              qmdEndpoint,
+            );
             for (const r of qmdResults) contentFileIds.add(r.fileId);
           } catch {}
         }
 
         // FTS5 full-text search
-        if (ftsClient.isConfigured()) {
+        const ftsEndpoint = await resolvePluginEndpoint(
+          db,
+          ctx.workspaceId,
+          "fts-search",
+          {
+            serviceUrl: process.env.FTS_SERVICE_URL,
+            apiSecret: process.env.FTS_API_SECRET,
+          },
+        );
+        if (ftsEndpoint) {
           try {
-            if (await ftsClient.isActiveForWorkspace(db, ctx.workspaceId)) {
-              const ftsResults = await ftsClient.search({
+            const ftsResults = await ftsClient.search(
+              {
                 workspaceId: ctx.workspaceId,
                 query: search,
                 limit: pageSize,
-              });
-              for (const r of ftsResults) contentFileIds.add(r.fileId);
-            }
+              },
+              ftsEndpoint,
+            );
+            for (const r of ftsResults) contentFileIds.add(r.fileId);
           } catch {}
         }
 
@@ -120,6 +143,125 @@ export const filesRouter = createRouter({
         pageSize,
         totalPages: Math.ceil(total / pageSize),
       };
+    }),
+
+  search: workspaceProcedure
+    .input(z.object({ query: z.string().min(1) }))
+    .query(async ({ ctx, input }) => {
+      const { db } = ctx;
+      const { query } = input;
+
+      // Collect content-matched file IDs with snippets/scores
+      const contentMap = new Map<string, { snippet?: string; score: number }>();
+
+      // QMD semantic search
+      const qmdEndpoint = await resolvePluginEndpoint(
+        db,
+        ctx.workspaceId,
+        "qmd-search",
+        {
+          serviceUrl: process.env.QMD_SERVICE_URL,
+          apiSecret: process.env.QMD_API_SECRET,
+        },
+      );
+      if (qmdEndpoint) {
+        try {
+          const qmdResults = await qmdClient.search(
+            {
+              workspaceId: ctx.workspaceId,
+              query,
+              limit: 20,
+            },
+            qmdEndpoint,
+          );
+          for (const r of qmdResults) {
+            contentMap.set(r.fileId, {
+              snippet: r.snippet,
+              score: r.score,
+            });
+          }
+        } catch {}
+      }
+
+      // FTS full-text search
+      const ftsEndpoint = await resolvePluginEndpoint(
+        db,
+        ctx.workspaceId,
+        "fts-search",
+        {
+          serviceUrl: process.env.FTS_SERVICE_URL,
+          apiSecret: process.env.FTS_API_SECRET,
+        },
+      );
+      if (ftsEndpoint) {
+        try {
+          const ftsResults = await ftsClient.search(
+            {
+              workspaceId: ctx.workspaceId,
+              query,
+              limit: 20,
+            },
+            ftsEndpoint,
+          );
+          for (const r of ftsResults) {
+            // Keep whichever source gave a higher score
+            const existing = contentMap.get(r.fileId);
+            if (!existing || r.score > existing.score) {
+              contentMap.set(r.fileId, {
+                snippet: r.snippet ?? existing?.snippet,
+                score: r.score,
+              });
+            }
+          }
+        } catch {}
+      }
+
+      const escapedQuery = query.replace(/[%_\\]/g, "\\$&");
+      const nameMatches = await db
+        .select()
+        .from(files)
+        .where(
+          and(
+            eq(files.workspaceId, ctx.workspaceId),
+            ilike(files.name, `%${escapedQuery}%`),
+          ),
+        )
+        .limit(20);
+
+      const nameIds = new Set(nameMatches.map((f) => f.id));
+      const contentOnlyIds = [...contentMap.keys()].filter(
+        (id) => !nameIds.has(id),
+      );
+
+      let contentOnlyFiles: typeof nameMatches = [];
+      if (contentOnlyIds.length > 0) {
+        contentOnlyFiles = await db
+          .select()
+          .from(files)
+          .where(
+            and(
+              eq(files.workspaceId, ctx.workspaceId),
+              inArray(files.id, contentOnlyIds),
+            ),
+          );
+      }
+
+      const allFiles = [...nameMatches, ...contentOnlyFiles];
+      const results = allFiles.map((f) => ({
+        ...f,
+        snippet: contentMap.get(f.id)?.snippet ?? null,
+        contentScore: contentMap.get(f.id)?.score ?? null,
+      }));
+
+      results.sort((a, b) => {
+        if (a.contentScore && !b.contentScore) return -1;
+        if (!a.contentScore && b.contentScore) return 1;
+        if (a.contentScore && b.contentScore)
+          return b.contentScore - a.contentScore;
+        return a.name.localeCompare(b.name);
+      });
+
+      return results.slice(0, 20);
     }),
 
   get: workspaceProcedure
@@ -214,33 +356,40 @@ export const filesRouter = createRouter({
       await storage.delete(file.storagePath);
 
       // De-index from search plugins
-      if (qmdClient.isConfigured()) {
-        void (async () => {
-          try {
-            if (
-              !(await qmdClient.isActiveForWorkspace(ctx.db, ctx.workspaceId))
-            )
-              return;
-            await qmdClient.deindexFile({
-              workspaceId: ctx.workspaceId,
-              fileId: file.id,
-            });
-          } catch {}
-        })();
+      const qmdEndpoint = await resolvePluginEndpoint(
+        ctx.db,
+        ctx.workspaceId,
+        "qmd-search",
+        {
+          serviceUrl: process.env.QMD_SERVICE_URL,
+          apiSecret: process.env.QMD_API_SECRET,
+        },
+      );
+      if (qmdEndpoint) {
+        void qmdClient
+          .deindexFile(
+            { workspaceId: ctx.workspaceId, fileId: file.id },
+            qmdEndpoint,
+          )
+          .catch(() => {});
       }
-      if (ftsClient.isConfigured()) {
-        void (async () => {
-          try {
-            if (
-              !(await ftsClient.isActiveForWorkspace(ctx.db, ctx.workspaceId))
-            )
-              return;
-            await ftsClient.deindexFile({
-              workspaceId: ctx.workspaceId,
-              fileId: file.id,
-            });
-          } catch {}
-        })();
+
+      const ftsEndpoint = await resolvePluginEndpoint(
+        ctx.db,
+        ctx.workspaceId,
+        "fts-search",
+        {
+          serviceUrl: process.env.FTS_SERVICE_URL,
+          apiSecret: process.env.FTS_API_SECRET,
+        },
+      );
+      if (ftsEndpoint) {
+        void ftsClient
+          .deindexFile(
+            { workspaceId: ctx.workspaceId, fileId: file.id },
+            ftsEndpoint,
+          )
+          .catch(() => {});
       }
 
       // Delete from database
@@ -263,12 +412,24 @@ export const filesRouter = createRouter({
     .mutation(async ({ ctx, input }) => {
       let totalSize = 0;
 
-      const qmdActive =
-        qmdClient.isConfigured() &&
-        (await qmdClient.isActiveForWorkspace(ctx.db, ctx.workspaceId));
-      const ftsActive =
-        ftsClient.isConfigured() &&
-        (await ftsClient.isActiveForWorkspace(ctx.db, ctx.workspaceId));
+      const qmdEndpoint = await resolvePluginEndpoint(
+        ctx.db,
+        ctx.workspaceId,
+        "qmd-search",
+        {
+          serviceUrl: process.env.QMD_SERVICE_URL,
+          apiSecret: process.env.QMD_API_SECRET,
+        },
+      );
+      const ftsEndpoint = await resolvePluginEndpoint(
+        ctx.db,
+        ctx.workspaceId,
+        "fts-search",
+        {
+          serviceUrl: process.env.FTS_SERVICE_URL,
+          apiSecret: process.env.FTS_API_SECRET,
+        },
+      );
 
       for (const id of input.ids) {
         const [file] = await ctx.db
@@ -279,20 +440,20 @@ export const filesRouter = createRouter({
         if (file) {
           const storage = await createStorageForFile(file.storageConfigId);
           await storage.delete(file.storagePath);
-          if (qmdActive) {
+          if (qmdEndpoint) {
             void qmdClient
-              .deindexFile({
-                workspaceId: ctx.workspaceId,
-                fileId: file.id,
-              })
+              .deindexFile(
+                { workspaceId: ctx.workspaceId, fileId: file.id },
+                qmdEndpoint,
+              )
               .catch(() => {});
           }
-          if (ftsActive) {
+          if (ftsEndpoint) {
             void ftsClient
-              .deindexFile({
-                workspaceId: ctx.workspaceId,
-                fileId: file.id,
-              })
+              .deindexFile(
+                { workspaceId: ctx.workspaceId, fileId: file.id },
+                ftsEndpoint,
+              )
               .catch(() => {});
           }
           await ctx.db.delete(files).where(eq(files.id, id));

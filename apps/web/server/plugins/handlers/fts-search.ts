@@ -3,6 +3,7 @@ import { files } from "@locker/database";
 import { createStorageForFile } from "../../storage";
 import { getBuiltinPluginBySlug } from "../catalog";
 import { ftsClient } from "./fts-client";
+import type { EndpointConfig } from "./fts-client";
 import { streamToString } from "./qmd-client";
 import type {
   PluginHandler,
@@ -13,6 +14,21 @@ import type {
 } from "../types";
 
 const manifest = getBuiltinPluginBySlug("fts-search")!;
+
+function endpointFromCtx(ctx: PluginContext): EndpointConfig | undefined {
+  const customUrl = (ctx.config.serviceUrl as string) || undefined;
+  const customSecret = ctx.secrets.apiSecret || undefined;
+
+  // No workspace-level overrides — let the client use its own env-var defaults
+  if (!customUrl && !customSecret) return undefined;
+
+  return {
+    serviceUrl: customUrl ?? process.env.FTS_SERVICE_URL,
+    // Guard: only fall back to the env secret when the URL is also from env
+    apiSecret:
+      customSecret ?? (customUrl ? undefined : process.env.FTS_API_SECRET),
+  };
+}
 
 export const ftsSearchHandler: PluginHandler = {
   manifest,
@@ -44,13 +60,16 @@ export const ftsSearchHandler: PluginHandler = {
           const { data } = await storage.download(file.storagePath);
           const content = await streamToString(data);
 
-          await ftsClient.indexFile({
-            workspaceId: ctx.workspaceId,
-            fileId: target.id,
-            fileName: target.name,
-            mimeType: file.mimeType,
-            content,
-          });
+          await ftsClient.indexFile(
+            {
+              workspaceId: ctx.workspaceId,
+              fileId: target.id,
+              fileName: target.name,
+              mimeType: file.mimeType,
+              content,
+            },
+            endpointFromCtx(ctx),
+          );
         }
       } catch {
         // Best-effort indexing
@@ -69,13 +88,16 @@ export const ftsSearchHandler: PluginHandler = {
   },
 
   async search(
-    _ctx: PluginContext,
+    ctx: PluginContext,
     params: { query: string; folderId?: string | null; limit?: number },
   ): Promise<SearchResult[]> {
-    return ftsClient.search({
-      workspaceId: _ctx.workspaceId,
-      query: params.query,
-      limit: params.limit ?? 20,
-    });
+    return ftsClient.search(
+      {
+        workspaceId: ctx.workspaceId,
+        query: params.query,
+        limit: params.limit ?? 20,
+      },
+      endpointFromCtx(ctx),
+    );
   },
 };

@@ -1,6 +1,7 @@
 import { createStorageForFile } from "../../storage";
 import { getBuiltinPluginBySlug } from "../catalog";
 import { qmdClient, streamToString } from "./qmd-client";
+import type { EndpointConfig } from "./fts-client";
 import type {
   PluginHandler,
   PluginContext,
@@ -11,6 +12,21 @@ import type {
 
 const manifest = getBuiltinPluginBySlug("qmd-search")!;
 
+function endpointFromCtx(ctx: PluginContext): EndpointConfig | undefined {
+  const customUrl = (ctx.config.serviceUrl as string) || undefined;
+  const customSecret = ctx.secrets.apiSecret || undefined;
+
+  // No workspace-level overrides — let the client use its own env-var defaults
+  if (!customUrl && !customSecret) return undefined;
+
+  return {
+    serviceUrl: customUrl ?? process.env.QMD_SERVICE_URL,
+    // Guard: only fall back to the env secret when the URL is also from env
+    apiSecret:
+      customSecret ?? (customUrl ? undefined : process.env.QMD_API_SECRET),
+  };
+}
+
 export const qmdSearchHandler: PluginHandler = {
   manifest,
 
@@ -20,7 +36,8 @@ export const qmdSearchHandler: PluginHandler = {
     target: ActionTarget,
   ): Promise<ActionResult> {
     if (actionId === "qmd.reindex-file" && target.type === "file") {
-      if (!qmdClient.isConfigured()) {
+      const endpoint = endpointFromCtx(ctx);
+      if (!endpoint?.serviceUrl && !qmdClient.isConfigured()) {
         return {
           status: "success",
           message: "QMD service is not configured",
@@ -51,13 +68,16 @@ export const qmdSearchHandler: PluginHandler = {
           const { data } = await storage.download(file.storagePath);
           const content = await streamToString(data);
 
-          await qmdClient.indexFile({
-            workspaceId: ctx.workspaceId,
-            fileId: target.id,
-            fileName: target.name,
-            mimeType: file.mimeType,
-            content,
-          });
+          await qmdClient.indexFile(
+            {
+              workspaceId: ctx.workspaceId,
+              fileId: target.id,
+              fileName: target.name,
+              mimeType: file.mimeType,
+              content,
+            },
+            endpoint,
+          );
         }
       } catch {
         // Best-effort indexing
@@ -79,14 +99,19 @@ export const qmdSearchHandler: PluginHandler = {
     ctx: PluginContext,
     params: { query: string; folderId?: string | null; limit?: number },
   ): Promise<SearchResult[]> {
+    const endpoint = endpointFromCtx(ctx);
+
     // Use the QMD service if configured
-    if (qmdClient.isConfigured()) {
+    if (endpoint?.serviceUrl || qmdClient.isConfigured()) {
       try {
-        return await qmdClient.search({
-          workspaceId: ctx.workspaceId,
-          query: params.query,
-          limit: params.limit ?? 20,
-        });
+        return await qmdClient.search(
+          {
+            workspaceId: ctx.workspaceId,
+            query: params.query,
+            limit: params.limit ?? 20,
+          },
+          endpoint,
+        );
       } catch {
         // Fall through to filename scoring
       }
