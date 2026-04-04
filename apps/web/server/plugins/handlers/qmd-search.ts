@@ -1,15 +1,15 @@
-import { createStorage } from '@openstore/storage';
-import { getBuiltinPluginBySlug } from '../catalog';
-import { qmdClient, streamToString } from './qmd-client';
+import { createStorageForFile } from "../../storage";
+import { getBuiltinPluginBySlug } from "../catalog";
+import { qmdClient, streamToString } from "./qmd-client";
 import type {
   PluginHandler,
   PluginContext,
   ActionResult,
   ActionTarget,
   SearchResult,
-} from '../types';
+} from "../types";
 
-const manifest = getBuiltinPluginBySlug('qmd-search')!;
+const manifest = getBuiltinPluginBySlug("qmd-search")!;
 
 export const qmdSearchHandler: PluginHandler = {
   manifest,
@@ -19,20 +19,24 @@ export const qmdSearchHandler: PluginHandler = {
     actionId: string,
     target: ActionTarget,
   ): Promise<ActionResult> {
-    if (actionId === 'qmd.reindex-file' && target.type === 'file') {
+    if (actionId === "qmd.reindex-file" && target.type === "file") {
       if (!qmdClient.isConfigured()) {
         return {
-          status: 'success',
-          message: 'QMD service is not configured',
+          status: "success",
+          message: "QMD service is not configured",
         };
       }
 
       try {
-        const { files } = await import('@openstore/database');
-        const { eq, and } = await import('drizzle-orm');
+        const { files } = await import("@openstore/database");
+        const { eq, and } = await import("drizzle-orm");
 
         const [file] = await ctx.db
-          .select({ storagePath: files.storagePath, mimeType: files.mimeType })
+          .select({
+            storagePath: files.storagePath,
+            mimeType: files.mimeType,
+            storageConfigId: files.storageConfigId,
+          })
           .from(files)
           .where(
             and(
@@ -43,7 +47,7 @@ export const qmdSearchHandler: PluginHandler = {
           .limit(1);
 
         if (file && qmdClient.shouldIndex(file.mimeType)) {
-          const storage = createStorage();
+          const storage = await createStorageForFile(file.storageConfigId);
           const { data } = await storage.download(file.storagePath);
           const content = await streamToString(data);
 
@@ -60,13 +64,13 @@ export const qmdSearchHandler: PluginHandler = {
       }
 
       return {
-        status: 'queued',
+        status: "queued",
         message: `Queued "${target.name}" for discovery re-indexing`,
       };
     }
 
     return {
-      status: 'success',
+      status: "success",
       message: `${actionId} completed`,
     };
   },
@@ -89,13 +93,13 @@ export const qmdSearchHandler: PluginHandler = {
     }
 
     // Fallback: score workspace files by name matching
-    const { files } = await import('@openstore/database');
-    const { eq, and, ilike } = await import('drizzle-orm');
+    const { files } = await import("@openstore/database");
+    const { eq, and, ilike } = await import("drizzle-orm");
 
     const query = params.query.trim().toLowerCase();
     const tokens = query.split(/\s+/).filter(Boolean);
 
-    const escapedQuery = query.replace(/[%_\\]/g, '\\$&');
+    const escapedQuery = query.replace(/[%_\\]/g, "\\$&");
     const rows = await ctx.db
       .select({ id: files.id, name: files.name })
       .from(files)

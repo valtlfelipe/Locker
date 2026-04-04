@@ -1,25 +1,30 @@
-import { TRPCError } from '@trpc/server';
-import { eq, and, sql } from 'drizzle-orm';
-import { randomUUID } from 'crypto';
-import { createRouter, workspaceProcedure } from '../init';
-import { files, folders, workspaces } from '@openstore/database';
-import { createStorage } from '@openstore/storage';
-import { qmdClient, streamToString } from '../../plugins/handlers/qmd-client';
-import { invalidateWorkspaceVfsSnapshot } from '../../vfs/openstore-vfs';
+import { TRPCError } from "@trpc/server";
+import { eq, and, sql } from "drizzle-orm";
+import { randomUUID } from "crypto";
+import { createRouter, workspaceProcedure } from "../init";
+import { files, folders, workspaces } from "@openstore/database";
+import {
+  createStorageForWorkspace,
+  createStorageForFile,
+  shouldEnforceQuota,
+} from "../../../server/storage";
+import { qmdClient, streamToString } from "../../plugins/handlers/qmd-client";
+import { invalidateWorkspaceVfsSnapshot } from "../../vfs/openstore-vfs";
 import {
   initiateUploadSchema,
   completeUploadSchema,
   abortUploadSchema,
   MULTIPART_THRESHOLD,
   MULTIPART_PART_SIZE,
-} from '@openstore/common';
+} from "@openstore/common";
 
 export const uploadsRouter = createRouter({
-  getProvider: workspaceProcedure.query(() => {
-    const provider = process.env.BLOB_STORAGE_PROVIDER ?? 'local';
-    const storage = createStorage();
+  getProvider: workspaceProcedure.query(async ({ ctx }) => {
+    const { storage, providerName } = await createStorageForWorkspace(
+      ctx.workspaceId,
+    );
     return {
-      provider,
+      provider: providerName,
       supportsPresignedUpload: storage.supportsPresignedUpload,
     };
   }),
@@ -29,20 +34,25 @@ export const uploadsRouter = createRouter({
     .mutation(async ({ ctx, input }) => {
       const { db, workspaceId, userId } = ctx;
 
-      // Check storage quota
-      const [ws] = await db
-        .select({
-          storageUsed: workspaces.storageUsed,
-          storageLimit: workspaces.storageLimit,
-        })
-        .from(workspaces)
-        .where(eq(workspaces.id, workspaceId));
+      // Check storage quota (skipped for BYOB and self-hosted/local)
+      if (await shouldEnforceQuota(workspaceId)) {
+        const [ws] = await db
+          .select({
+            storageUsed: workspaces.storageUsed,
+            storageLimit: workspaces.storageLimit,
+          })
+          .from(workspaces)
+          .where(eq(workspaces.id, workspaceId));
 
-      if (!ws || (ws.storageUsed ?? 0) + input.fileSize > (ws.storageLimit ?? 0)) {
-        throw new TRPCError({
-          code: 'PAYLOAD_TOO_LARGE',
-          message: 'Storage quota exceeded',
-        });
+        if (
+          !ws ||
+          (ws.storageUsed ?? 0) + input.fileSize > (ws.storageLimit ?? 0)
+        ) {
+          throw new TRPCError({
+            code: "PAYLOAD_TOO_LARGE",
+            message: "Storage quota exceeded",
+          });
+        }
       }
 
       // Validate folder ownership
@@ -57,13 +67,17 @@ export const uploadsRouter = createRouter({
             ),
           );
         if (!folder) {
-          throw new TRPCError({ code: 'NOT_FOUND', message: 'Folder not found' });
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: "Folder not found",
+          });
         }
       }
 
       const fileId = randomUUID();
       const storagePath = `${workspaceId}/${fileId}/${input.fileName}`;
-      const storage = createStorage();
+      const { storage, configId, providerName } =
+        await createStorageForWorkspace(workspaceId);
 
       // Insert file record with 'uploading' status
       await db.insert(files).values({
@@ -75,8 +89,9 @@ export const uploadsRouter = createRouter({
         mimeType: input.contentType,
         size: input.fileSize,
         storagePath,
-        storageProvider: process.env.BLOB_STORAGE_PROVIDER ?? 'local',
-        status: 'uploading',
+        storageProvider: providerName,
+        storageConfigId: configId,
+        status: "uploading",
       });
 
       // Determine upload strategy
@@ -84,7 +99,7 @@ export const uploadsRouter = createRouter({
         return {
           fileId,
           storagePath,
-          strategy: 'server-buffered' as const,
+          strategy: "server-buffered" as const,
         };
       }
 
@@ -99,7 +114,7 @@ export const uploadsRouter = createRouter({
         return {
           fileId,
           storagePath,
-          strategy: 'presigned-put' as const,
+          strategy: "presigned-put" as const,
           presignedUrl: url,
         };
       }
@@ -120,7 +135,7 @@ export const uploadsRouter = createRouter({
       return {
         fileId,
         storagePath,
-        strategy: 'multipart' as const,
+        strategy: "multipart" as const,
         uploadId,
         partSize: MULTIPART_PART_SIZE,
         parts: urls,
@@ -139,17 +154,17 @@ export const uploadsRouter = createRouter({
           and(
             eq(files.id, input.fileId),
             eq(files.workspaceId, workspaceId),
-            eq(files.status, 'uploading'),
+            eq(files.status, "uploading"),
           ),
         );
 
       if (!file) {
-        throw new TRPCError({ code: 'NOT_FOUND', message: 'Upload not found' });
+        throw new TRPCError({ code: "NOT_FOUND", message: "Upload not found" });
       }
 
       // Complete multipart upload if applicable
       if (input.uploadId && input.parts) {
-        const storage = createStorage();
+        const storage = await createStorageForFile(file.storageConfigId);
         await storage.completeMultipartUpload!({
           path: file.storagePath,
           uploadId: input.uploadId,
@@ -160,7 +175,7 @@ export const uploadsRouter = createRouter({
       // Mark as ready
       const [updated] = await db
         .update(files)
-        .set({ status: 'ready', updatedAt: new Date() })
+        .set({ status: "ready", updatedAt: new Date() })
         .where(eq(files.id, input.fileId))
         .returning();
 
@@ -172,12 +187,13 @@ export const uploadsRouter = createRouter({
         })
         .where(eq(workspaces.id, workspaceId));
 
-      // Fire-and-forget: index file for QMD search (only if plugin is active for this workspace)
+      // Fire-and-forget: index file for QMD search
       if (qmdClient.isConfigured() && qmdClient.shouldIndex(file.mimeType)) {
         void (async () => {
           try {
-            if (!(await qmdClient.isActiveForWorkspace(db, workspaceId))) return;
-            const storage = createStorage();
+            if (!(await qmdClient.isActiveForWorkspace(db, workspaceId)))
+              return;
+            const storage = await createStorageForFile(file.storageConfigId);
             const { data } = await storage.download(file.storagePath);
             const content = await streamToString(data);
             await qmdClient.indexFile({
@@ -204,18 +220,16 @@ export const uploadsRouter = createRouter({
         .select()
         .from(files)
         .where(
-          and(
-            eq(files.id, input.fileId),
-            eq(files.workspaceId, workspaceId),
-          ),
+          and(eq(files.id, input.fileId), eq(files.workspaceId, workspaceId)),
         );
 
       if (!file) return { success: true };
 
+      const storage = await createStorageForFile(file.storageConfigId);
+
       // Abort multipart upload if applicable
       if (input.uploadId) {
         try {
-          const storage = createStorage();
           await storage.abortMultipartUpload!({
             path: file.storagePath,
             uploadId: input.uploadId,
@@ -227,7 +241,6 @@ export const uploadsRouter = createRouter({
 
       // Try to delete any uploaded data
       try {
-        const storage = createStorage();
         await storage.delete(file.storagePath);
       } catch {
         // Best effort

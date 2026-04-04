@@ -50,6 +50,20 @@
       "when": 1775223897365,
       "tag": "0006_slim_nick_fury",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1775241751639,
+      "tag": "0007_graceful_meltdown",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1775243284449,
+      "tag": "0008_gray_wendell_rand",
+      "breakpoints": true
     }
   ]
 }

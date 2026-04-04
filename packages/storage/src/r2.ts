@@ -8,9 +8,17 @@ import {
   UploadPartCommand,
   CompleteMultipartUploadCommand,
   AbortMultipartUploadCommand,
-} from '@aws-sdk/client-s3';
-import { getSignedUrl as awsGetSignedUrl } from '@aws-sdk/s3-request-presigner';
-import type { StorageProvider } from './interface';
+} from "@aws-sdk/client-s3";
+import { getSignedUrl as awsGetSignedUrl } from "@aws-sdk/s3-request-presigner";
+import type { StorageProvider } from "./interface";
+
+export interface R2StorageConfig {
+  accountId: string;
+  accessKeyId: string;
+  secretAccessKey: string;
+  bucket: string;
+  publicUrl?: string;
+}
 
 export class R2StorageAdapter implements StorageProvider {
   private client: S3Client;
@@ -19,18 +27,19 @@ export class R2StorageAdapter implements StorageProvider {
 
   readonly supportsPresignedUpload = true;
 
-  constructor() {
-    const accountId = process.env.R2_ACCOUNT_ID!;
+  constructor(config?: R2StorageConfig) {
+    const accountId = config?.accountId ?? process.env.R2_ACCOUNT_ID!;
     this.client = new S3Client({
-      region: 'auto',
+      region: "auto",
       endpoint: `https://${accountId}.r2.cloudflarestorage.com`,
       credentials: {
-        accessKeyId: process.env.R2_ACCESS_KEY_ID!,
-        secretAccessKey: process.env.R2_SECRET_ACCESS_KEY!,
+        accessKeyId: config?.accessKeyId ?? process.env.R2_ACCESS_KEY_ID!,
+        secretAccessKey:
+          config?.secretAccessKey ?? process.env.R2_SECRET_ACCESS_KEY!,
       },
     });
-    this.bucket = process.env.R2_BUCKET ?? 'openstore';
-    this.publicUrl = process.env.R2_PUBLIC_URL;
+    this.bucket = config?.bucket ?? process.env.R2_BUCKET ?? "openstore";
+    this.publicUrl = config?.publicUrl ?? process.env.R2_PUBLIC_URL;
   }
 
   async upload(params: {
@@ -85,7 +94,7 @@ export class R2StorageAdapter implements StorageProvider {
 
     return {
       data: response.Body!.transformToWebStream(),
-      contentType: response.ContentType ?? 'application/octet-stream',
+      contentType: response.ContentType ?? "application/octet-stream",
       size: response.ContentLength ?? 0,
     };
   }
@@ -142,7 +151,7 @@ export class R2StorageAdapter implements StorageProvider {
     contentType: string;
     size: number;
     expiresIn?: number;
-  }): Promise<{ url: string; method: 'PUT' }> {
+  }): Promise<{ url: string; method: "PUT" }> {
     const command = new PutObjectCommand({
       Bucket: this.bucket,
       Key: params.path,
@@ -152,7 +161,7 @@ export class R2StorageAdapter implements StorageProvider {
     const url = await awsGetSignedUrl(this.client, command, {
       expiresIn: params.expiresIn ?? 3600,
     });
-    return { url, method: 'PUT' };
+    return { url, method: "PUT" };
   }
 
   async createMultipartUpload(params: {

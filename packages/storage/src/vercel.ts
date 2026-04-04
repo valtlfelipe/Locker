@@ -1,8 +1,21 @@
-import { put, del, head } from '@vercel/blob';
-import type { StorageProvider } from './interface';
+import { put, del, head } from "@vercel/blob";
+import type { StorageProvider } from "./interface";
+
+export interface VercelBlobConfig {
+  token: string;
+}
 
 export class VercelBlobAdapter implements StorageProvider {
   readonly supportsPresignedUpload = false;
+  private token: string | undefined;
+
+  constructor(config?: VercelBlobConfig) {
+    this.token = config?.token;
+  }
+
+  private get tokenOpts(): { token: string } | Record<string, never> {
+    return this.token ? { token: this.token } : {};
+  }
 
   async upload(params: {
     path: string;
@@ -11,10 +24,11 @@ export class VercelBlobAdapter implements StorageProvider {
     metadata?: Record<string, string>;
   }): Promise<{ url: string; path: string }> {
     const blob = await put(params.path, params.data, {
-      access: 'private',
+      access: "private",
       contentType: params.contentType,
       addRandomSuffix: false,
       allowOverwrite: true,
+      ...this.tokenOpts,
     });
 
     return { url: blob.url, path: params.path };
@@ -25,14 +39,18 @@ export class VercelBlobAdapter implements StorageProvider {
     contentType: string;
     size: number;
   }> {
-    const blobMeta = await head(path);
-    const token = process.env.BLOB_READ_WRITE_TOKEN;
+    const blobMeta = await head(path, this.tokenOpts);
+    const resolvedToken = this.token ?? process.env.BLOB_READ_WRITE_TOKEN;
     const response = await fetch(blobMeta.url, {
-      headers: token ? { authorization: `Bearer ${token}` } : {},
+      headers: resolvedToken
+        ? { authorization: `Bearer ${resolvedToken}` }
+        : {},
     });
 
     if (!response.ok || !response.body) {
-      throw new Error(`Failed to download blob (status ${response.status}): ${path}`);
+      throw new Error(
+        `Failed to download blob (status ${response.status}): ${path}`,
+      );
     }
 
     return {
@@ -43,7 +61,7 @@ export class VercelBlobAdapter implements StorageProvider {
   }
 
   async getSignedUrl(path: string, _expiresIn?: number): Promise<string> {
-    const blobMeta = await head(path);
+    const blobMeta = await head(path, this.tokenOpts);
     return blobMeta.url;
   }
 
@@ -57,12 +75,12 @@ export class VercelBlobAdapter implements StorageProvider {
   }
 
   async delete(path: string): Promise<void> {
-    await del(path);
+    await del(path, this.tokenOpts);
   }
 
   async exists(path: string): Promise<boolean> {
     try {
-      await head(path);
+      await head(path, this.tokenOpts);
       return true;
     } catch {
       return false;

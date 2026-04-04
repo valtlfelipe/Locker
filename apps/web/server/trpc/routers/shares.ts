@@ -1,17 +1,14 @@
-import { z } from 'zod';
-import { eq, and, sql } from 'drizzle-orm';
-import { randomBytes } from 'crypto';
-import { createRouter, workspaceProcedure, publicProcedure } from '../init';
-import { shareLinks, files, folders } from '@openstore/database';
-import { createShareLinkSchema, SHARE_TOKEN_LENGTH } from '@openstore/common';
-import { createStorage } from '@openstore/storage';
-import {
-  hashLinkPassword,
-  verifyLinkPassword,
-} from '../../security/password';
+import { z } from "zod";
+import { eq, and, sql } from "drizzle-orm";
+import { randomBytes } from "crypto";
+import { createRouter, workspaceProcedure, publicProcedure } from "../init";
+import { shareLinks, files, folders } from "@openstore/database";
+import { createShareLinkSchema, SHARE_TOKEN_LENGTH } from "@openstore/common";
+import { createStorageForFile } from "../../../server/storage";
+import { hashLinkPassword, verifyLinkPassword } from "../../security/password";
 
 function generateToken(): string {
-  return randomBytes(SHARE_TOKEN_LENGTH).toString('hex');
+  return randomBytes(SHARE_TOKEN_LENGTH).toString("hex");
 }
 
 export const sharesRouter = createRouter({
@@ -25,23 +22,23 @@ export const sharesRouter = createRouter({
     // Enrich with file/folder names
     const enriched = await Promise.all(
       links.map(async (link) => {
-        let itemName = 'Unknown';
-        let itemType: 'file' | 'folder' = 'file';
+        let itemName = "Unknown";
+        let itemType: "file" | "folder" = "file";
 
         if (link.fileId) {
           const [file] = await ctx.db
             .select({ name: files.name })
             .from(files)
             .where(eq(files.id, link.fileId));
-          itemName = file?.name ?? 'Deleted file';
-          itemType = 'file';
+          itemName = file?.name ?? "Deleted file";
+          itemType = "file";
         } else if (link.folderId) {
           const [folder] = await ctx.db
             .select({ name: folders.name })
             .from(folders)
             .where(eq(folders.id, link.folderId));
-          itemName = folder?.name ?? 'Deleted folder';
-          itemType = 'folder';
+          itemName = folder?.name ?? "Deleted folder";
+          itemType = "folder";
         }
 
         return { ...link, itemName, itemType };
@@ -55,7 +52,7 @@ export const sharesRouter = createRouter({
     .input(createShareLinkSchema)
     .mutation(async ({ ctx, input }) => {
       if (!input.fileId && !input.folderId) {
-        throw new Error('Must specify either fileId or folderId');
+        throw new Error("Must specify either fileId or folderId");
       }
 
       // Validate ownership
@@ -63,8 +60,13 @@ export const sharesRouter = createRouter({
         const [file] = await ctx.db
           .select()
           .from(files)
-          .where(and(eq(files.id, input.fileId), eq(files.workspaceId, ctx.workspaceId)));
-        if (!file) throw new Error('File not found');
+          .where(
+            and(
+              eq(files.id, input.fileId),
+              eq(files.workspaceId, ctx.workspaceId),
+            ),
+          );
+        if (!file) throw new Error("File not found");
       }
 
       if (input.folderId) {
@@ -72,9 +74,12 @@ export const sharesRouter = createRouter({
           .select()
           .from(folders)
           .where(
-            and(eq(folders.id, input.folderId), eq(folders.workspaceId, ctx.workspaceId)),
+            and(
+              eq(folders.id, input.folderId),
+              eq(folders.workspaceId, ctx.workspaceId),
+            ),
           );
-        if (!folder) throw new Error('Folder not found');
+        if (!folder) throw new Error("Folder not found");
       }
 
       const token = generateToken();
@@ -89,7 +94,9 @@ export const sharesRouter = createRouter({
           token,
           access: input.access,
           hasPassword: !!input.password,
-          passwordHash: input.password ? hashLinkPassword(input.password) : null,
+          passwordHash: input.password
+            ? hashLinkPassword(input.password)
+            : null,
           expiresAt: input.expiresAt ?? null,
           maxDownloads: input.maxDownloads ?? null,
         })
@@ -108,7 +115,10 @@ export const sharesRouter = createRouter({
         .update(shareLinks)
         .set({ isActive: false, updatedAt: new Date() })
         .where(
-          and(eq(shareLinks.id, input.id), eq(shareLinks.workspaceId, ctx.workspaceId)),
+          and(
+            eq(shareLinks.id, input.id),
+            eq(shareLinks.workspaceId, ctx.workspaceId),
+          ),
         );
 
       return { success: true };
@@ -120,7 +130,10 @@ export const sharesRouter = createRouter({
       await ctx.db
         .delete(shareLinks)
         .where(
-          and(eq(shareLinks.id, input.id), eq(shareLinks.workspaceId, ctx.workspaceId)),
+          and(
+            eq(shareLinks.id, input.id),
+            eq(shareLinks.workspaceId, ctx.workspaceId),
+          ),
         );
 
       return { success: true };
@@ -141,21 +154,21 @@ export const sharesRouter = createRouter({
         .where(eq(shareLinks.token, input.token));
 
       if (!link || !link.isActive) {
-        return { error: 'Link not found or has been revoked' };
+        return { error: "Link not found or has been revoked" };
       }
 
       // Check expiry
       if (link.expiresAt && new Date(link.expiresAt) < new Date()) {
-        return { error: 'This link has expired' };
+        return { error: "This link has expired" };
       }
 
       // Check max downloads
       if (
-        link.access === 'download' &&
+        link.access === "download" &&
         link.maxDownloads &&
         link.downloadCount >= link.maxDownloads
       ) {
-        return { error: 'Download limit reached' };
+        return { error: "Download limit reached" };
       }
 
       // Check password
@@ -164,13 +177,13 @@ export const sharesRouter = createRouter({
           return { requiresPassword: true };
         }
         if (!verifyLinkPassword(input.password, link.passwordHash)) {
-          return { error: 'Incorrect password' };
+          return { error: "Incorrect password" };
         }
       }
 
       // Get the shared item
       let sharedItem: {
-        type: 'file' | 'folder';
+        type: "file" | "folder";
         name: string;
         size?: number;
         mimeType?: string;
@@ -184,7 +197,7 @@ export const sharesRouter = createRouter({
           .where(eq(files.id, link.fileId));
         if (file) {
           sharedItem = {
-            type: 'file',
+            type: "file",
             name: file.name,
             size: file.size,
             mimeType: file.mimeType,
@@ -207,7 +220,7 @@ export const sharesRouter = createRouter({
 
         if (folder) {
           sharedItem = {
-            type: 'folder',
+            type: "folder",
             name: folder.name,
             files: folderFiles,
           };
@@ -239,46 +252,46 @@ export const sharesRouter = createRouter({
         .from(shareLinks)
         .where(eq(shareLinks.token, input.token));
 
-      if (!link || !link.isActive) throw new Error('Link not found');
-      if (link.access !== 'download') throw new Error('Download not allowed');
+      if (!link || !link.isActive) throw new Error("Link not found");
+      if (link.access !== "download") throw new Error("Download not allowed");
       if (link.expiresAt && new Date(link.expiresAt) < new Date()) {
-        throw new Error('Link expired');
+        throw new Error("Link expired");
       }
       if (
         link.hasPassword &&
         !verifyLinkPassword(input.password, link.passwordHash)
       ) {
-        throw new Error('Incorrect password');
+        throw new Error("Incorrect password");
       }
       if (link.maxDownloads && link.downloadCount >= link.maxDownloads) {
-        throw new Error('Download limit reached');
+        throw new Error("Download limit reached");
       }
 
       const queryConditions = [
         eq(files.workspaceId, link.workspaceId),
-        eq(files.status, 'ready'),
+        eq(files.status, "ready"),
       ];
 
       if (link.fileId) {
         if (input.fileId && input.fileId !== link.fileId) {
-          throw new Error('File not found');
+          throw new Error("File not found");
         }
         queryConditions.push(eq(files.id, link.fileId));
       } else if (link.folderId) {
-        if (!input.fileId) throw new Error('No file specified');
+        if (!input.fileId) throw new Error("No file specified");
         queryConditions.push(eq(files.id, input.fileId));
         queryConditions.push(eq(files.folderId, link.folderId));
       } else {
-        throw new Error('Link target not found');
+        throw new Error("Link target not found");
       }
 
       const [file] = await ctx.db
         .select()
         .from(files)
         .where(and(...queryConditions));
-      if (!file) throw new Error('File not found');
+      if (!file) throw new Error("File not found");
 
-      const storage = createStorage();
+      const storage = await createStorageForFile(file.storageConfigId);
       const url = await storage.getSignedUrl(file.storagePath, 3600);
 
       const [updated] = await ctx.db
@@ -296,7 +309,7 @@ export const sharesRouter = createRouter({
         .returning({ id: shareLinks.id });
 
       if (!updated) {
-        throw new Error('Download limit reached');
+        throw new Error("Download limit reached");
       }
 
       return { url, filename: file.name };

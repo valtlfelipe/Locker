@@ -1,12 +1,17 @@
-import { z } from 'zod';
-import { eq, and, asc, desc, isNull, sql, ilike } from 'drizzle-orm';
-import { createRouter, workspaceProcedure } from '../init';
-import { files, workspaces, folders } from '@openstore/database';
-import { createStorage } from '@openstore/storage';
-import { renameFileSchema, moveItemSchema, paginationSchema, sortSchema } from '@openstore/common';
-import { enhanceSearchResultsWithPlugins } from '../../plugins/search';
-import { qmdClient } from '../../plugins/handlers/qmd-client';
-import { invalidateWorkspaceVfsSnapshot } from '../../vfs/openstore-vfs';
+import { z } from "zod";
+import { eq, and, asc, desc, isNull, sql, ilike } from "drizzle-orm";
+import { createRouter, workspaceProcedure } from "../init";
+import { files, workspaces, folders } from "@openstore/database";
+import { createStorageForFile } from "../../../server/storage";
+import {
+  renameFileSchema,
+  moveItemSchema,
+  paginationSchema,
+  sortSchema,
+} from "@openstore/common";
+import { enhanceSearchResultsWithPlugins } from "../../plugins/search";
+import { qmdClient } from "../../plugins/handlers/qmd-client";
+import { invalidateWorkspaceVfsSnapshot } from "../../vfs/openstore-vfs";
 
 export const filesRouter = createRouter({
   list: workspaceProcedure
@@ -33,7 +38,7 @@ export const filesRouter = createRouter({
       }
 
       const orderBy =
-        direction === 'asc' ? asc(files[field]) : desc(files[field]);
+        direction === "asc" ? asc(files[field]) : desc(files[field]);
 
       const [items, countResult] = await Promise.all([
         db
@@ -76,7 +81,9 @@ export const filesRouter = createRouter({
       const [file] = await ctx.db
         .select()
         .from(files)
-        .where(and(eq(files.id, input.id), eq(files.workspaceId, ctx.workspaceId)));
+        .where(
+          and(eq(files.id, input.id), eq(files.workspaceId, ctx.workspaceId)),
+        );
 
       if (!file) return null;
       return file;
@@ -88,11 +95,13 @@ export const filesRouter = createRouter({
       const [file] = await ctx.db
         .select()
         .from(files)
-        .where(and(eq(files.id, input.id), eq(files.workspaceId, ctx.workspaceId)));
+        .where(
+          and(eq(files.id, input.id), eq(files.workspaceId, ctx.workspaceId)),
+        );
 
-      if (!file) throw new Error('File not found');
+      if (!file) throw new Error("File not found");
 
-      const storage = createStorage();
+      const storage = await createStorageForFile(file.storageConfigId);
       const url = await storage.getSignedUrl(file.storagePath, 3600);
       return { url, filename: file.name, mimeType: file.mimeType };
     }),
@@ -103,7 +112,9 @@ export const filesRouter = createRouter({
       const [updated] = await ctx.db
         .update(files)
         .set({ name: input.name, updatedAt: new Date() })
-        .where(and(eq(files.id, input.id), eq(files.workspaceId, ctx.workspaceId)))
+        .where(
+          and(eq(files.id, input.id), eq(files.workspaceId, ctx.workspaceId)),
+        )
         .returning();
 
       invalidateWorkspaceVfsSnapshot(ctx.workspaceId);
@@ -124,13 +135,15 @@ export const filesRouter = createRouter({
               eq(folders.workspaceId, ctx.workspaceId),
             ),
           );
-        if (!folder) throw new Error('Target folder not found');
+        if (!folder) throw new Error("Target folder not found");
       }
 
       const [updated] = await ctx.db
         .update(files)
         .set({ folderId: input.targetFolderId, updatedAt: new Date() })
-        .where(and(eq(files.id, input.id), eq(files.workspaceId, ctx.workspaceId)))
+        .where(
+          and(eq(files.id, input.id), eq(files.workspaceId, ctx.workspaceId)),
+        )
         .returning();
 
       invalidateWorkspaceVfsSnapshot(ctx.workspaceId);
@@ -143,19 +156,24 @@ export const filesRouter = createRouter({
       const [file] = await ctx.db
         .select()
         .from(files)
-        .where(and(eq(files.id, input.id), eq(files.workspaceId, ctx.workspaceId)));
+        .where(
+          and(eq(files.id, input.id), eq(files.workspaceId, ctx.workspaceId)),
+        );
 
-      if (!file) throw new Error('File not found');
+      if (!file) throw new Error("File not found");
 
       // Delete from storage
-      const storage = createStorage();
+      const storage = await createStorageForFile(file.storageConfigId);
       await storage.delete(file.storagePath);
 
       // De-index from QMD search (only if plugin is active for this workspace)
       if (qmdClient.isConfigured()) {
         void (async () => {
           try {
-            if (!(await qmdClient.isActiveForWorkspace(ctx.db, ctx.workspaceId))) return;
+            if (
+              !(await qmdClient.isActiveForWorkspace(ctx.db, ctx.workspaceId))
+            )
+              return;
             await qmdClient.deindexFile({
               workspaceId: ctx.workspaceId,
               fileId: file.id,
@@ -170,7 +188,9 @@ export const filesRouter = createRouter({
       // Update storage usage
       await ctx.db
         .update(workspaces)
-        .set({ storageUsed: sql`GREATEST(${workspaces.storageUsed} - ${file.size}, 0)` })
+        .set({
+          storageUsed: sql`GREATEST(${workspaces.storageUsed} - ${file.size}, 0)`,
+        })
         .where(eq(workspaces.id, ctx.workspaceId));
 
       invalidateWorkspaceVfsSnapshot(ctx.workspaceId);
@@ -180,7 +200,6 @@ export const filesRouter = createRouter({
   deleteMany: workspaceProcedure
     .input(z.object({ ids: z.array(z.string().uuid()) }))
     .mutation(async ({ ctx, input }) => {
-      const storage = createStorage();
       let totalSize = 0;
 
       const qmdActive =
@@ -194,12 +213,15 @@ export const filesRouter = createRouter({
           .where(and(eq(files.id, id), eq(files.workspaceId, ctx.workspaceId)));
 
         if (file) {
+          const storage = await createStorageForFile(file.storageConfigId);
           await storage.delete(file.storagePath);
           if (qmdActive) {
-            void qmdClient.deindexFile({
-              workspaceId: ctx.workspaceId,
-              fileId: file.id,
-            }).catch(() => {});
+            void qmdClient
+              .deindexFile({
+                workspaceId: ctx.workspaceId,
+                fileId: file.id,
+              })
+              .catch(() => {});
           }
           await ctx.db.delete(files).where(eq(files.id, id));
           totalSize += file.size;
@@ -209,7 +231,9 @@ export const filesRouter = createRouter({
       if (totalSize > 0) {
         await ctx.db
           .update(workspaces)
-          .set({ storageUsed: sql`GREATEST(${workspaces.storageUsed} - ${totalSize}, 0)` })
+          .set({
+            storageUsed: sql`GREATEST(${workspaces.storageUsed} - ${totalSize}, 0)`,
+          })
           .where(eq(workspaces.id, ctx.workspaceId));
       }
 

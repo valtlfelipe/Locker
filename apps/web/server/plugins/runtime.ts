@@ -1,15 +1,15 @@
-import { and, eq, inArray } from 'drizzle-orm';
-import { createStorage } from '@openstore/storage';
-import { workspacePlugins, workspacePluginSecrets } from '@openstore/database';
-import type { Database } from '@openstore/database';
-import type { PluginPermission } from '@openstore/common';
-import { decryptPluginSecret } from './secrets';
+import { and, eq, inArray } from "drizzle-orm";
+import { createStorageForWorkspace } from "../storage";
+import { workspacePlugins, workspacePluginSecrets } from "@openstore/database";
+import type { Database } from "@openstore/database";
+import type { PluginPermission } from "@openstore/common";
+import { decryptPluginSecret } from "./secrets";
 import type {
   PluginHandler,
   PluginContext,
   ActionResult,
   ActionTarget,
-} from './types';
+} from "./types";
 
 // ---------------------------------------------------------------------------
 // Handler registry
@@ -61,7 +61,7 @@ export async function buildPluginContext(params: {
     workspaceId: params.workspaceId,
     userId: params.userId,
     db: params.db,
-    storage: createStorage(),
+    storage: (await createStorageForWorkspace(params.workspaceId)).storage,
     config: params.config,
     secrets,
   };
@@ -83,7 +83,7 @@ export async function dispatchAction(params: {
 }): Promise<ActionResult> {
   const handler = getHandler(params.pluginSlug);
   if (!handler?.executeAction) {
-    throw new Error('Plugin does not implement action execution');
+    throw new Error("Plugin does not implement action execution");
   }
 
   const ctx = await buildPluginContext({
@@ -130,7 +130,7 @@ export async function dispatchSearch<
     .where(
       and(
         eq(workspacePlugins.workspaceId, params.workspaceId),
-        eq(workspacePlugins.status, 'active'),
+        eq(workspacePlugins.status, "active"),
       ),
     );
 
@@ -139,20 +139,22 @@ export async function dispatchSearch<
       ? (plugin.grantedPermissions as PluginPermission[])
       : [];
 
-    if (!permissions.includes('search.enhance')) continue;
+    if (!permissions.includes("search.enhance")) continue;
 
     const handler = getHandler(plugin.pluginSlug);
     if (!handler?.search) continue;
 
     const config =
-      plugin.config && typeof plugin.config === 'object' && !Array.isArray(plugin.config)
+      plugin.config &&
+      typeof plugin.config === "object" &&
+      !Array.isArray(plugin.config)
         ? (plugin.config as Record<string, string | number | boolean | null>)
         : {};
 
     const ctx = await buildPluginContext({
       db: params.db,
       workspaceId: params.workspaceId,
-      userId: 'system:search', // search dispatched without a specific actor
+      userId: "system:search", // search dispatched without a specific actor
       pluginId: plugin.id,
       config,
     });

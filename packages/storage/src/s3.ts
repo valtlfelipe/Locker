@@ -12,23 +12,34 @@ import {
 import { getSignedUrl as awsGetSignedUrl } from "@aws-sdk/s3-request-presigner";
 import type { StorageProvider } from "./interface";
 
+export interface S3StorageConfig {
+  accessKeyId: string;
+  secretAccessKey: string;
+  region?: string;
+  bucket: string;
+  endpoint?: string;
+}
+
 export class S3StorageAdapter implements StorageProvider {
   private client: S3Client;
   private bucket: string;
 
   readonly supportsPresignedUpload = true;
 
-  constructor() {
+  constructor(config?: S3StorageConfig) {
+    const region = config?.region ?? process.env.AWS_REGION ?? "us-east-1";
     this.client = new S3Client({
-      region: process.env.AWS_REGION ?? "us-east-1",
+      region,
+      ...(config?.endpoint ? { endpoint: config.endpoint } : {}),
       credentials: {
-        accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
-        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
+        accessKeyId: config?.accessKeyId ?? process.env.AWS_ACCESS_KEY_ID!,
+        secretAccessKey:
+          config?.secretAccessKey ?? process.env.AWS_SECRET_ACCESS_KEY!,
       },
       requestChecksumCalculation: "WHEN_REQUIRED",
       responseChecksumValidation: "WHEN_REQUIRED",
     });
-    this.bucket = process.env.S3_BUCKET ?? "openstore";
+    this.bucket = config?.bucket ?? process.env.S3_BUCKET ?? "openstore";
   }
 
   async upload(params: {

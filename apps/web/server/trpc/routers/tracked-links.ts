@@ -1,26 +1,23 @@
-import { z } from 'zod';
-import { eq, and, sql, desc, count } from 'drizzle-orm';
-import { randomBytes } from 'crypto';
-import { createRouter, workspaceProcedure, publicProcedure } from '../init';
+import { z } from "zod";
+import { eq, and, sql, desc, count } from "drizzle-orm";
+import { randomBytes } from "crypto";
+import { createRouter, workspaceProcedure, publicProcedure } from "../init";
 import {
   trackedLinks,
   trackedLinkEvents,
   files,
   folders,
-} from '@openstore/database';
+} from "@openstore/database";
 import {
   createTrackedLinkSchema,
   updateTrackedLinkSchema,
-} from '@openstore/common';
-import { TRACKED_LINK_TOKEN_LENGTH } from '@openstore/common';
-import { createStorage } from '@openstore/storage';
-import {
-  hashLinkPassword,
-  verifyLinkPassword,
-} from '../../security/password';
+} from "@openstore/common";
+import { TRACKED_LINK_TOKEN_LENGTH } from "@openstore/common";
+import { createStorageForFile } from "../../../server/storage";
+import { hashLinkPassword, verifyLinkPassword } from "../../security/password";
 
 function generateToken(): string {
-  return randomBytes(TRACKED_LINK_TOKEN_LENGTH).toString('hex');
+  return randomBytes(TRACKED_LINK_TOKEN_LENGTH).toString("hex");
 }
 
 export const trackedLinksRouter = createRouter({
@@ -33,23 +30,23 @@ export const trackedLinksRouter = createRouter({
 
     const enriched = await Promise.all(
       links.map(async (link) => {
-        let itemName = 'Unknown';
-        let itemType: 'file' | 'folder' = 'file';
+        let itemName = "Unknown";
+        let itemType: "file" | "folder" = "file";
 
         if (link.fileId) {
           const [file] = await ctx.db
             .select({ name: files.name, mimeType: files.mimeType })
             .from(files)
             .where(eq(files.id, link.fileId));
-          itemName = file?.name ?? 'Deleted file';
-          itemType = 'file';
+          itemName = file?.name ?? "Deleted file";
+          itemType = "file";
         } else if (link.folderId) {
           const [folder] = await ctx.db
             .select({ name: folders.name })
             .from(folders)
             .where(eq(folders.id, link.folderId));
-          itemName = folder?.name ?? 'Deleted folder';
-          itemType = 'folder';
+          itemName = folder?.name ?? "Deleted folder";
+          itemType = "folder";
         }
 
         // Get unique visitors count
@@ -87,8 +84,8 @@ export const trackedLinksRouter = createRouter({
 
       if (!link) return null;
 
-      let itemName = 'Unknown';
-      let itemType: 'file' | 'folder' = 'file';
+      let itemName = "Unknown";
+      let itemType: "file" | "folder" = "file";
       let mimeType: string | undefined;
 
       if (link.fileId) {
@@ -96,16 +93,16 @@ export const trackedLinksRouter = createRouter({
           .select({ name: files.name, mimeType: files.mimeType })
           .from(files)
           .where(eq(files.id, link.fileId));
-        itemName = file?.name ?? 'Deleted file';
+        itemName = file?.name ?? "Deleted file";
         mimeType = file?.mimeType;
-        itemType = 'file';
+        itemType = "file";
       } else if (link.folderId) {
         const [folder] = await ctx.db
           .select({ name: folders.name })
           .from(folders)
           .where(eq(folders.id, link.folderId));
-        itemName = folder?.name ?? 'Deleted folder';
-        itemType = 'folder';
+        itemName = folder?.name ?? "Deleted folder";
+        itemType = "folder";
       }
 
       return { ...link, itemName, itemType, mimeType };
@@ -115,7 +112,7 @@ export const trackedLinksRouter = createRouter({
     .input(createTrackedLinkSchema)
     .mutation(async ({ ctx, input }) => {
       if (!input.fileId && !input.folderId) {
-        throw new Error('Must specify either fileId or folderId');
+        throw new Error("Must specify either fileId or folderId");
       }
 
       if (input.fileId) {
@@ -128,7 +125,7 @@ export const trackedLinksRouter = createRouter({
               eq(files.workspaceId, ctx.workspaceId),
             ),
           );
-        if (!file) throw new Error('File not found');
+        if (!file) throw new Error("File not found");
       }
 
       if (input.folderId) {
@@ -141,7 +138,7 @@ export const trackedLinksRouter = createRouter({
               eq(folders.workspaceId, ctx.workspaceId),
             ),
           );
-        if (!folder) throw new Error('Folder not found');
+        if (!folder) throw new Error("Folder not found");
       }
 
       const token = generateToken();
@@ -158,7 +155,9 @@ export const trackedLinksRouter = createRouter({
           description: input.description ?? null,
           access: input.access,
           hasPassword: !!input.password,
-          passwordHash: input.password ? hashLinkPassword(input.password) : null,
+          passwordHash: input.password
+            ? hashLinkPassword(input.password)
+            : null,
           requireEmail: input.requireEmail,
           expiresAt: input.expiresAt ?? null,
           validFrom: input.validFrom ?? null,
@@ -241,7 +240,7 @@ export const trackedLinksRouter = createRouter({
             eq(trackedLinks.workspaceId, ctx.workspaceId),
           ),
         );
-      if (!link) throw new Error('Link not found');
+      if (!link) throw new Error("Link not found");
 
       const events = await ctx.db
         .select()
@@ -278,7 +277,7 @@ export const trackedLinksRouter = createRouter({
             eq(trackedLinks.workspaceId, ctx.workspaceId),
           ),
         );
-      if (!link) throw new Error('Link not found');
+      if (!link) throw new Error("Link not found");
 
       const sinceDate = new Date();
       sinceDate.setDate(sinceDate.getDate() - input.days);
@@ -396,7 +395,9 @@ export const trackedLinksRouter = createRouter({
         cityBreakdown,
         referrerBreakdown,
         uniqueVisitors: uniqueVisitors?.count ?? 0,
-        avgDurationSeconds: avgDuration?.avg ? Math.round(avgDuration.avg) : null,
+        avgDurationSeconds: avgDuration?.avg
+          ? Math.round(avgDuration.avg)
+          : null,
       };
     }),
 
@@ -416,25 +417,25 @@ export const trackedLinksRouter = createRouter({
         .where(eq(trackedLinks.token, input.token));
 
       if (!link || !link.isActive) {
-        return { error: 'Link not found or has been deactivated' };
+        return { error: "Link not found or has been deactivated" };
       }
 
       const now = new Date();
 
       if (link.expiresAt && new Date(link.expiresAt) < now) {
-        return { error: 'This link has expired' };
+        return { error: "This link has expired" };
       }
 
       if (link.validFrom && new Date(link.validFrom) > now) {
-        return { error: 'This link is not yet active' };
+        return { error: "This link is not yet active" };
       }
 
       if (link.validUntil && new Date(link.validUntil) < now) {
-        return { error: 'This link is no longer valid' };
+        return { error: "This link is no longer valid" };
       }
 
       if (link.maxViews && link.viewCount >= link.maxViews) {
-        return { error: 'View limit reached' };
+        return { error: "View limit reached" };
       }
 
       if (link.hasPassword) {
@@ -442,7 +443,7 @@ export const trackedLinksRouter = createRouter({
           return { requiresPassword: true, requiresEmail: link.requireEmail };
         }
         if (!verifyLinkPassword(input.password, link.passwordHash)) {
-          return { error: 'Incorrect password' };
+          return { error: "Incorrect password" };
         }
       }
 
@@ -452,7 +453,7 @@ export const trackedLinksRouter = createRouter({
 
       // Get the shared item
       let sharedItem: {
-        type: 'file' | 'folder';
+        type: "file" | "folder";
         name: string;
         size?: number;
         mimeType?: string;
@@ -466,7 +467,7 @@ export const trackedLinksRouter = createRouter({
           .where(eq(files.id, link.fileId));
         if (file) {
           sharedItem = {
-            type: 'file',
+            type: "file",
             name: file.name,
             size: file.size,
             mimeType: file.mimeType,
@@ -489,7 +490,7 @@ export const trackedLinksRouter = createRouter({
 
         if (folder) {
           sharedItem = {
-            type: 'folder',
+            type: "folder",
             name: folder.name,
             files: folderFiles,
           };
@@ -528,53 +529,53 @@ export const trackedLinksRouter = createRouter({
         .from(trackedLinks)
         .where(eq(trackedLinks.token, input.token));
 
-      if (!link || !link.isActive) throw new Error('Link not found');
-      if (link.access !== 'download') throw new Error('Download not allowed');
+      if (!link || !link.isActive) throw new Error("Link not found");
+      if (link.access !== "download") throw new Error("Download not allowed");
       if (link.expiresAt && new Date(link.expiresAt) < new Date()) {
-        throw new Error('Link expired');
+        throw new Error("Link expired");
       }
       if (link.validFrom && new Date(link.validFrom) > new Date()) {
-        throw new Error('Link is not yet active');
+        throw new Error("Link is not yet active");
       }
       if (link.validUntil && new Date(link.validUntil) < new Date()) {
-        throw new Error('Link is no longer active');
+        throw new Error("Link is no longer active");
       }
       if (link.maxViews && link.viewCount >= link.maxViews) {
-        throw new Error('View limit reached');
+        throw new Error("View limit reached");
       }
       if (link.requireEmail && !input.email) {
-        throw new Error('Email required');
+        throw new Error("Email required");
       }
       if (
         link.hasPassword &&
         !verifyLinkPassword(input.password, link.passwordHash)
       ) {
-        throw new Error('Incorrect password');
+        throw new Error("Incorrect password");
       }
 
       const queryConditions = [
         eq(files.workspaceId, link.workspaceId),
-        eq(files.status, 'ready'),
+        eq(files.status, "ready"),
       ];
 
       if (link.fileId) {
         if (input.fileId && input.fileId !== link.fileId) {
-          throw new Error('File not found');
+          throw new Error("File not found");
         }
         queryConditions.push(eq(files.id, link.fileId));
       } else if (link.folderId) {
-        if (!input.fileId) throw new Error('No file specified');
+        if (!input.fileId) throw new Error("No file specified");
         queryConditions.push(eq(files.id, input.fileId));
         queryConditions.push(eq(files.folderId, link.folderId));
       } else {
-        throw new Error('Link target not found');
+        throw new Error("Link target not found");
       }
 
       const [file] = await ctx.db
         .select()
         .from(files)
         .where(and(...queryConditions));
-      if (!file) throw new Error('File not found');
+      if (!file) throw new Error("File not found");
 
       // Increment download count
       await ctx.db
@@ -584,7 +585,7 @@ export const trackedLinksRouter = createRouter({
         })
         .where(eq(trackedLinks.id, link.id));
 
-      const storage = createStorage();
+      const storage = await createStorageForFile(file.storageConfigId);
       const url = await storage.getSignedUrl(file.storagePath, 3600);
       return { url, filename: file.name };
     }),
