@@ -1,5 +1,15 @@
 import { z } from "zod";
-import { eq, and, asc, desc, isNull, sql, ilike } from "drizzle-orm";
+import {
+  eq,
+  and,
+  asc,
+  desc,
+  isNull,
+  sql,
+  ilike,
+  inArray,
+  or,
+} from "drizzle-orm";
 import { createRouter, workspaceProcedure } from "../init";
 import { files, workspaces, folders } from "@locker/database";
 import { createStorageForFile } from "../../../server/storage";
@@ -30,7 +40,27 @@ export const filesRouter = createRouter({
       const conditions = [eq(files.workspaceId, ctx.workspaceId)];
 
       if (search) {
-        conditions.push(ilike(files.name, `%${search}%`));
+        // Fetch QMD content-matched file IDs in parallel with building the query
+        let qmdFileIds: string[] = [];
+        if (qmdClient.isConfigured()) {
+          try {
+            const qmdResults = await qmdClient.search({
+              workspaceId: ctx.workspaceId,
+              query: search,
+              limit: pageSize,
+            });
+            qmdFileIds = qmdResults.map((r) => r.fileId);
+          } catch {
+            // Fall through — name-only search still works
+          }
+        }
+
+        const nameMatch = ilike(files.name, `%${search}%`);
+        if (qmdFileIds.length > 0) {
+          conditions.push(or(nameMatch, inArray(files.id, qmdFileIds))!);
+        } else {
+          conditions.push(nameMatch);
+        }
       } else {
         conditions.push(
           folderId ? eq(files.folderId, folderId) : isNull(files.folderId),
