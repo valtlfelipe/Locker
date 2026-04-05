@@ -27,6 +27,7 @@ import { TranscriptionViewer } from "@/components/transcription-viewer";
 import { useWorkspace } from "@/lib/workspace-context";
 import { isTextIndexable } from "@locker/common";
 import { toast } from "sonner";
+import { PDFViewer } from "@/components/pdf-viewer";
 
 /* ------------------------------------------------------------------ */
 /*  Viewer type detection                                              */
@@ -727,14 +728,11 @@ function AudioPreview({
 
 /* ---- PDF ---- */
 
-function PdfPreview({ url, name }: { url: string | null; name: string }) {
+function PdfPreview({ url }: { url: string | null; name: string }) {
   if (!url) return null;
   return (
-    <div
-      className="rounded-lg border overflow-hidden"
-      style={{ height: "75vh" }}
-    >
-      <iframe src={url} className="w-full h-full" title={name} />
+    <div style={{ height: "75vh" }}>
+      <PDFViewer url={url} showThumbnails={false} />
     </div>
   );
 }
