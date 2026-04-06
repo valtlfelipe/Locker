@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "tsc --noEmit",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "postinstall": "cp node_modules/pdfjs-dist/build/pdf.worker.min.mjs public/pdf.worker.min.mjs"
   },
   "dependencies": {
     "@atlaskit/pragmatic-drag-and-drop": "^1.7.10",
@@ -15,6 +16,7 @@
     "@locker/database": "workspace:*",
     "@locker/email": "workspace:*",
     "@locker/storage": "workspace:*",
+    "@tailwindcss/typography": "^0.5.19",
     "@tanstack/react-query": "^5.90.21",
     "@trpc/client": "^11.13.4",
     "@trpc/react-query": "^11.13.4",
@@ -30,11 +32,14 @@
     "motion": "^12.29.0",
     "next": "^16.2.0",
     "next-themes": "^0.4.6",
+    "pdfjs-dist": "^5.4.449",
     "radix-ui": "^1.4.3",
     "re2": "^1.24.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "react-dropzone": "^14.3.8",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
     "shadcn": "^4.1.2",
     "sonner": "^2.0.7",
     "superjson": "^2.2.6",

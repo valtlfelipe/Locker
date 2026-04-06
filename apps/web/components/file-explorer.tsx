@@ -40,6 +40,7 @@ import { DraggableFileRow } from "@/components/file-explorer/draggable-file-row"
 import { CommandSearch } from "@/components/command-search";
 import { DesktopDropOverlay } from "@/components/desktop-drop-overlay";
 import { useFileDrop } from "@/hooks/use-file-drop";
+import { useFileDownload } from "@/hooks/use-file-download";
 import { useWorkspace } from "@/lib/workspace-context";
 import { isTextIndexable } from "@locker/common";
 import { toast } from "sonner";
@@ -112,7 +113,7 @@ export function FileExplorer({ folderId }: { folderId: string | null }) {
     },
   });
 
-  const getDownloadUrl = trpc.files.getDownloadUrl.useMutation();
+  const { download: downloadFile } = useFileDownload();
   const runPluginAction = trpc.plugins.runAction.useMutation();
 
   const { data: filePluginActions = [] } = trpc.plugins.fileActions.useQuery({
@@ -144,14 +145,8 @@ export function FileExplorer({ folderId }: { folderId: string | null }) {
   });
 
   const handleDownload = useCallback(
-    async (fileId: string) => {
-      const result = await getDownloadUrl.mutateAsync({ id: fileId });
-      const a = document.createElement("a");
-      a.href = result.url;
-      a.download = result.filename;
-      a.click();
-    },
-    [getDownloadUrl],
+    (fileId: string) => downloadFile(fileId),
+    [downloadFile],
   );
 
   const handleDesktopDrop = useCallback((files: File[]) => {
@@ -426,7 +421,10 @@ export function FileExplorer({ folderId }: { folderId: string | null }) {
                 key={file.id}
                 fileId={file.id}
                 fileName={file.name}
-                className={`${ROW_GRID} hover:bg-muted/50 group transition-colors`}
+                onClick={() =>
+                  router.push(`/w/${workspace.slug}/file/${file.id}`)
+                }
+                className={`${ROW_GRID} hover:bg-muted/50 cursor-pointer group transition-colors`}
               >
                 <div className="flex items-center gap-2.5 min-w-0">
                   <FileIcon
@@ -446,150 +444,154 @@ export function FileExplorer({ folderId }: { folderId: string | null }) {
                     {formatDate(file.updatedAt)}
                   </span>
                 </div>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      className="opacity-0 group-hover:opacity-100"
-                    >
-                      <MoreHorizontal />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem onSelect={() => handleDownload(file.id)}>
-                      <Download />
-                      Download
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onSelect={() =>
-                        setRenameTarget({
-                          id: file.id,
-                          name: file.name,
-                          type: "file",
-                        })
-                      }
-                    >
-                      <Pencil />
-                      Rename
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onSelect={() =>
-                        setShareTarget({
-                          id: file.id,
-                          name: file.name,
-                          type: "file",
-                        })
-                      }
-                    >
-                      <Share2 />
-                      Share
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onSelect={() =>
-                        setTrackTarget({
-                          id: file.id,
-                          name: file.name,
-                          type: "file",
-                        })
-                      }
-                    >
-                      <BarChart3 />
-                      Track
-                    </DropdownMenuItem>
-                    {filePluginActions.length > 0 && (
-                      <>
-                        <DropdownMenuSeparator />
-                        {filePluginActions.map((action) => (
-                          <DropdownMenuItem
-                            key={`${action.workspacePluginId}:${action.actionId}`}
-                            onSelect={() =>
-                              handlePluginAction(action, "file", file.id)
-                            }
-                          >
-                            <Sparkles />
-                            {action.label}
-                          </DropdownMenuItem>
-                        ))}
-                      </>
-                    )}
-                    {(() => {
-                      const tStatus = transcriptionStatuses[file.id];
-                      if (tStatus === "ready") {
-                        return (
-                          <>
-                            <DropdownMenuSeparator />
+                <div onClick={(e) => e.stopPropagation()}>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        className="opacity-0 group-hover:opacity-100"
+                      >
+                        <MoreHorizontal />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem
+                        onSelect={() => handleDownload(file.id)}
+                      >
+                        <Download />
+                        Download
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onSelect={() =>
+                          setRenameTarget({
+                            id: file.id,
+                            name: file.name,
+                            type: "file",
+                          })
+                        }
+                      >
+                        <Pencil />
+                        Rename
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onSelect={() =>
+                          setShareTarget({
+                            id: file.id,
+                            name: file.name,
+                            type: "file",
+                          })
+                        }
+                      >
+                        <Share2 />
+                        Share
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onSelect={() =>
+                          setTrackTarget({
+                            id: file.id,
+                            name: file.name,
+                            type: "file",
+                          })
+                        }
+                      >
+                        <BarChart3 />
+                        Track
+                      </DropdownMenuItem>
+                      {filePluginActions.length > 0 && (
+                        <>
+                          <DropdownMenuSeparator />
+                          {filePluginActions.map((action) => (
                             <DropdownMenuItem
+                              key={`${action.workspacePluginId}:${action.actionId}`}
                               onSelect={() =>
-                                setTranscriptionTarget({
-                                  id: file.id,
-                                  name: file.name,
-                                })
+                                handlePluginAction(action, "file", file.id)
                               }
                             >
-                              <FileText />
-                              View Transcription
+                              <Sparkles />
+                              {action.label}
                             </DropdownMenuItem>
-                          </>
-                        );
-                      }
-                      if (tStatus === "processing") {
-                        return (
-                          <>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem disabled>
-                              <Loader2 className="animate-spin" />
-                              Transcription in progress...
-                            </DropdownMenuItem>
-                          </>
-                        );
-                      }
-                      if (tStatus === "failed") {
-                        return (
-                          <>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem
-                              onSelect={() =>
-                                generateTranscription.mutate({
-                                  fileId: file.id,
-                                })
-                              }
-                            >
-                              <FileText />
-                              Retry Transcription
-                            </DropdownMenuItem>
-                          </>
-                        );
-                      }
-                      if (!tStatus && !isTextIndexable(file.mimeType)) {
-                        return (
-                          <>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem
-                              onSelect={() =>
-                                generateTranscription.mutate({
-                                  fileId: file.id,
-                                })
-                              }
-                            >
-                              <FileText />
-                              Generate Transcription
-                            </DropdownMenuItem>
-                          </>
-                        );
-                      }
-                      return null;
-                    })()}
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem
-                      variant="destructive"
-                      onSelect={() => deleteFile.mutate({ id: file.id })}
-                    >
-                      <Trash2 />
-                      Delete
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                          ))}
+                        </>
+                      )}
+                      {(() => {
+                        const tStatus = transcriptionStatuses[file.id];
+                        if (tStatus === "ready") {
+                          return (
+                            <>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem
+                                onSelect={() =>
+                                  setTranscriptionTarget({
+                                    id: file.id,
+                                    name: file.name,
+                                  })
+                                }
+                              >
+                                <FileText />
+                                View Transcription
+                              </DropdownMenuItem>
+                            </>
+                          );
+                        }
+                        if (tStatus === "processing") {
+                          return (
+                            <>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem disabled>
+                                <Loader2 className="animate-spin" />
+                                Transcription in progress...
+                              </DropdownMenuItem>
+                            </>
+                          );
+                        }
+                        if (tStatus === "failed") {
+                          return (
+                            <>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem
+                                onSelect={() =>
+                                  generateTranscription.mutate({
+                                    fileId: file.id,
+                                  })
+                                }
+                              >
+                                <FileText />
+                                Retry Transcription
+                              </DropdownMenuItem>
+                            </>
+                          );
+                        }
+                        if (!tStatus && !isTextIndexable(file.mimeType)) {
+                          return (
+                            <>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem
+                                onSelect={() =>
+                                  generateTranscription.mutate({
+                                    fileId: file.id,
+                                  })
+                                }
+                              >
+                                <FileText />
+                                Generate Transcription
+                              </DropdownMenuItem>
+                            </>
+                          );
+                        }
+                        return null;
+                      })()}
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        variant="destructive"
+                        onSelect={() => deleteFile.mutate({ id: file.id })}
+                      >
+                        <Trash2 />
+                        Delete
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
               </DraggableFileRow>
             ))}
           </div>

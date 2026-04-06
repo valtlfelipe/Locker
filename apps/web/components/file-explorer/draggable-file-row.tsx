@@ -1,12 +1,13 @@
-'use client';
+"use client";
 
-import { useRef, useEffect, useState, type ReactNode } from 'react';
-import { draggable } from '@atlaskit/pragmatic-drag-and-drop/element/adapter';
-import { cn } from '@/lib/utils';
+import { useRef, useEffect, useState, type ReactNode } from "react";
+import { draggable } from "@atlaskit/pragmatic-drag-and-drop/element/adapter";
+import { cn } from "@/lib/utils";
 
 interface DraggableFileRowProps {
   fileId: string;
   fileName: string;
+  onClick?: () => void;
   className?: string;
   children: ReactNode;
 }
@@ -14,6 +15,7 @@ interface DraggableFileRowProps {
 export function DraggableFileRow({
   fileId,
   fileName,
+  onClick,
   className,
   children,
 }: DraggableFileRowProps) {
@@ -28,7 +30,7 @@ export function DraggableFileRow({
       element: el,
       getInitialData: () => ({
         id: fileId,
-        type: 'file' as const,
+        type: "file" as const,
         name: fileName,
       }),
       onDragStart: () => setIsDragging(true),
@@ -39,7 +41,8 @@ export function DraggableFileRow({
   return (
     <div
       ref={ref}
-      className={cn(className, isDragging && 'opacity-40')}
+      onClick={onClick}
+      className={cn(className, isDragging && "opacity-40")}
     >
       {children}
     </div>
