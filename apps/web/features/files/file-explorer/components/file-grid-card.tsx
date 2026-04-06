@@ -44,6 +44,7 @@ const CATEGORY_BG: Record<string, string> = {
 
 export function FileGridCard({
   file,
+  uploader,
   transcriptionStatus,
   pluginActions,
   onClick,
@@ -64,6 +65,7 @@ export function FileGridCard({
     size: number;
     updatedAt: Date;
   };
+  uploader?: { name: string | null; image: string | null };
   transcriptionStatus: string | undefined;
   pluginActions: PluginAction[];
   onClick: () => void;
@@ -215,7 +217,12 @@ export function FileGridCard({
 
       {/* Footer */}
       <div className="px-2.5 py-2 mt-auto flex items-center gap-1.5">
-        <Avatar className="size-4 rounded-full" />
+        <Avatar
+          name={uploader?.name}
+          src={uploader?.image}
+          className="size-5 rounded-full shrink-0"
+          width={20}
+        />
         <span className="text-xs text-muted-foreground truncate">
           Modified {formatDate(file.updatedAt)}
         </span>

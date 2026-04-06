@@ -162,6 +162,17 @@ export function FileExplorer({ folderId }: { folderId: string | null }) {
     { fileIds },
     { enabled: fileIds.length > 0 },
   );
+  const { data: members = [] } = trpc.members.list.useQuery();
+  const userMap = useMemo(
+    () =>
+      Object.fromEntries(
+        members.map((m) => [
+          m.userId,
+          { name: m.userName, image: m.userImage },
+        ]),
+      ) as Record<string, { name: string | null; image: string | null }>,
+    [members],
+  );
   const generateTranscription = trpc.transcriptions.generate.useMutation({
     onSuccess: (result) => {
       if (result.status === "queued") {
@@ -361,6 +372,7 @@ export function FileExplorer({ folderId }: { folderId: string | null }) {
               <FileGridCard
                 key={file.id}
                 file={file}
+                uploader={userMap[file.userId]}
                 transcriptionStatus={transcriptionStatuses[file.id]}
                 pluginActions={filePluginActions}
                 onClick={() =>
