@@ -76,11 +76,11 @@ export class S3StorageAdapter implements StorageProvider {
       }),
     );
 
-    const endpoint = this.endpoint ? `${this.endpoint}/${this.bucket}` :
+    const baseURL = this.endpoint ? `${this.endpoint}/${this.bucket}` :
       `https://${this.bucket}.s3.${this.region}.amazonaws.com`;
 
     return {
-      url: `${endpoint}/${params.path}`,
+      url: `${baseURL}/${params.path}`,
       path: params.path,
     };
   }
