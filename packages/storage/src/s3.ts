@@ -41,6 +41,7 @@ export class S3StorageAdapter implements StorageProvider {
       },
       requestChecksumCalculation: "WHEN_REQUIRED",
       responseChecksumValidation: "WHEN_REQUIRED",
+      forcePathStyle: !!this.endpoint, // Required for S3-compatible services with custom endpoints
     });
     this.bucket = config?.bucket ?? process.env.S3_BUCKET ?? "locker";
   }
