@@ -28,9 +28,10 @@ export class S3StorageAdapter implements StorageProvider {
 
   constructor(config?: S3StorageConfig) {
     const region = config?.region ?? process.env.AWS_REGION ?? "us-east-1";
+    const endpoint = config?.endpoint ?? process.env.AWS_ENDPOINT_URL;
     this.client = new S3Client({
       region,
-      ...(config?.endpoint ? { endpoint: config.endpoint } : {}),
+      ...(endpoint ? { endpoint } : {}),
       credentials: {
         accessKeyId: config?.accessKeyId ?? process.env.AWS_ACCESS_KEY_ID!,
         secretAccessKey:
