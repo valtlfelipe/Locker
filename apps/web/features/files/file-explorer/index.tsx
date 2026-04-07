@@ -11,6 +11,7 @@ import { ShareDialog } from "@/components/share-dialog";
 import { CreateTrackedLinkDialog } from "@/components/create-tracked-link-dialog";
 import { TranscriptionViewer } from "@/components/transcription-viewer";
 import { FileTagsDialog } from "@/components/file-tags-dialog";
+import { ManageTagsDialog } from "@/components/manage-tags-dialog";
 import { DesktopDropOverlay } from "@/components/desktop-drop-overlay";
 import { useFileDrop } from "@/hooks/use-file-drop";
 import { useFileDownload } from "@/hooks/use-file-download";
@@ -35,6 +36,7 @@ export function FileExplorer({ folderId }: { folderId: string | null }) {
   const workspace = useWorkspace();
   const [showUpload, setShowUpload] = useState(false);
   const [showCreateFolder, setShowCreateFolder] = useState(false);
+  const [showManageTags, setShowManageTags] = useState(false);
   const [droppedFiles, setDroppedFiles] = useState<File[] | undefined>(
     undefined,
   );
@@ -284,6 +286,7 @@ export function FileExplorer({ folderId }: { folderId: string | null }) {
           router.push(`/w/${workspace.slug}/folder/${id}`)
         }
         onCreateFolder={() => setShowCreateFolder(true)}
+        onManageTags={() => setShowManageTags(true)}
         onUpload={() => setShowUpload(true)}
       />
 
@@ -572,6 +575,10 @@ export function FileExplorer({ folderId }: { folderId: string | null }) {
           file={transcriptionTarget}
         />
       )}
+      <ManageTagsDialog
+        open={showManageTags}
+        onOpenChange={setShowManageTags}
+      />
       {tagTarget && (
         <FileTagsDialog
           open={!!tagTarget}

@@ -1,7 +1,12 @@
 "use client";
 
-import { Home, ChevronRight, FolderPlus, Upload } from "lucide-react";
+import { Home, ChevronRight, FolderPlus, Upload, Tag } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { CommandSearch } from "@/components/command-search";
 
 type Breadcrumb = { id: string; name: string };
@@ -11,12 +16,14 @@ export function ExplorerHeader({
   onNavigateHome,
   onNavigateFolder,
   onCreateFolder,
+  onManageTags,
   onUpload,
 }: {
   breadcrumbs: Breadcrumb[] | undefined;
   onNavigateHome: () => void;
   onNavigateFolder: (folderId: string) => void;
   onCreateFolder: () => void;
+  onManageTags: () => void;
   onUpload: () => void;
 }) {
   return (
@@ -46,6 +53,14 @@ export function ExplorerHeader({
 
       <div className="flex items-center gap-2 px-4">
         <CommandSearch />
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button variant="outline" size="icon-sm" onClick={onManageTags}>
+              <Tag className="size-4" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Manage Tags</TooltipContent>
+        </Tooltip>
         <Button variant="outline" size="sm" onClick={onCreateFolder}>
           <FolderPlus />
           New Folder
